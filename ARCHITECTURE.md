@@ -23,6 +23,7 @@ lixet/
 |-- validators/   Deterministic validation rules
 |-- install.py    Python installer and uninstaller
 |-- install.sh    Simple Linux installer
+|-- uninstall.sh  Simple Linux uninstaller
 |-- main.py       CLI entry point
 `-- manager.py    Compatibility import path
 ```
