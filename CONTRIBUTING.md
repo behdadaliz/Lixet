@@ -8,7 +8,7 @@ Lixet is a deterministic recovery tool for Linux administrators. Changes should 
 
 # Principles
 
-- Keep the user command simple: `lixet scan <service>` and `lixet doctor`, with small maintenance flags such as `--version` and `--update`.
+- Keep the user command simple: `lixet services`, `lixet scan <service>`, and `lixet doctor`, with small maintenance flags such as `--version` and `--update`.
 - Do not add AI-generated diagnosis or repair logic.
 - Prefer the Python standard library.
 - Do not modify system files outside the backup and repair flow.

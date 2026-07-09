@@ -52,6 +52,10 @@ lixet/
 
 `doctor` scans all supported services, merges issues, sorts them by severity, and shows a summary. Repairable issues are grouped by repair level. Safe repairs can be applied normally. Guarded repairs require explicit manual confirmation and are skipped by `-y`.
 
+## `lixet services`
+
+`services` prints the supported service names with a short description for each one. It reads from the same service registry used by `scan` and `doctor`.
+
 ## `lixet --version`
 
 `--version` reads the installed version from `/opt/lixet/VERSION` when running as an installed command. When running from a source checkout, it reads the project root `VERSION` file. It optionally checks GitHub Releases and falls back to tags when release data is unavailable.

@@ -68,8 +68,9 @@ def parse_and_execute(args: list[str]) -> int:
             Available commands:
               lixet                          Show this help page
               lixet --help                   Show this help page
-              lixet --version                Show installed Lixet version
+              lixet --version                Show installed and latest Lixet version
               sudo lixet --update            Update the installed Lixet version
+              lixet services                 Show supported services
               lixet scan <service>           Scan one service
               lixet scan <service> --dry-run Preview safe repairs without changing files
               lixet scan <service> -y        Apply all supported safe repairs
@@ -82,7 +83,7 @@ def parse_and_execute(args: list[str]) -> int:
         """),
     )
     parser.add_argument("--update", action="store_true", help="Update the installed Lixet version")
-    parser.add_argument("--version", action="store_true", help="Show installed Lixet version")
+    parser.add_argument("--version", action="store_true", help="Show installed and latest Lixet version")
     subparsers = parser.add_subparsers(dest="command", parser_class=partial(LixetArgumentParser, no_color=no_color))
 
     scan_parser = subparsers.add_parser("scan", parents=[common], help="Analyze a specific service")
@@ -95,6 +96,8 @@ def parse_and_execute(args: list[str]) -> int:
     doctor_parser.add_argument("--config", help="Override service configuration path for supported checks")
     doctor_parser.add_argument("--dry-run", action="store_true", help="Preview repairs without modifying files")
     doctor_parser.add_argument("-y", "--yes", action="store_true", help="Apply supported repairs without prompting")
+
+    subparsers.add_parser("services", parents=[common], help="Show supported services")
 
     if not args:
         parser.print_help()
@@ -117,10 +120,15 @@ def parse_and_execute(args: list[str]) -> int:
     from core.engine import LixetEngine
 
     engine = LixetEngine(
-        dry_run=parsed_args.dry_run,
-        yes=parsed_args.yes,
-        config_path=parsed_args.config,
+        dry_run=getattr(parsed_args, "dry_run", False),
+        yes=getattr(parsed_args, "yes", False),
+        config_path=getattr(parsed_args, "config", None),
         no_color=getattr(parsed_args, "no_color", False),
     )
-    ok = engine.scan_service(parsed_args.service) if parsed_args.command == "scan" else engine.run_doctor()
+    if parsed_args.command == "scan":
+        ok = engine.scan_service(parsed_args.service)
+    elif parsed_args.command == "doctor":
+        ok = engine.run_doctor()
+    else:
+        ok = engine.show_services()
     return 0 if ok else 1

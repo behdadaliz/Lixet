@@ -51,6 +51,12 @@ Update the installed version:
 sudo lixet --update
 ```
 
+Show supported services:
+
+```bash
+lixet services
+```
+
 Scan one service:
 
 ```bash
@@ -90,6 +96,12 @@ lixet --no-color scan ssh
 ---
 
 # Supported Services
+
+Run this command to see the same list in your terminal with short descriptions:
+
+```bash
+lixet services
+```
 
 Lixet currently checks:
 

@@ -61,58 +61,83 @@ class LixetEngine:
                 "validator": SSHValidator,
                 "default": "/etc/ssh/sshd_config",
                 "verify": self._verify_ssh,
+                "description": "OpenSSH server configuration and sshd_config checks",
             },
             "nginx": {
                 "service": NginxService,
                 "validator": NginxValidator,
                 "default": "/etc/nginx/nginx.conf",
                 "verify": self._verify_nginx,
+                "description": "Nginx main configuration and syntax checks",
             },
             "ufw": {
                 "service": UFWService,
                 "validator": UFWValidator,
                 "default": "/etc/ufw/ufw.conf",
                 "verify": self._verify_true,
+                "description": "UFW firewall status and ufw.conf checks",
             },
             "dns": {
                 "service": DNSService,
                 "validator": DNSValidator,
                 "default": "/etc/resolv.conf",
                 "verify": self._verify_true,
+                "description": "DNS resolver configuration and resolver diagnostics",
             },
             "networking": {
                 "service": NetworkingService,
                 "validator": NetworkingValidator,
                 "default": "/etc/hosts",
                 "verify": self._verify_true,
+                "description": "Basic networking checks and /etc/hosts validation",
             },
             "systemd": {
                 "service": SystemdService,
                 "validator": SystemdValidator,
                 "default": "/etc/systemd/system",
                 "verify": self._verify_systemd,
+                "description": "systemd unit files and failed or degraded state",
             },
             "sudoers": {
                 "service": SudoersService,
                 "validator": SudoersValidator,
                 "default": "/etc/sudoers",
                 "verify": self._verify_sudoers,
+                "description": "sudoers syntax validation through visudo",
             },
             "fstab": {
                 "service": FstabService,
                 "validator": FstabValidator,
                 "default": "/etc/fstab",
                 "verify": self._verify_fstab,
+                "description": "fstab structure and findmnt validation",
             },
             "sysctl": {
                 "service": SysctlService,
                 "validator": SysctlValidator,
                 "default": "/etc/sysctl.conf",
                 "verify": self._verify_true,
+                "description": "sysctl configuration parsing and duplicate key checks",
             },
         }
         if self.dry_run:
             self.ui.status("warn", "Dry run enabled. No files will be modified.")
+
+    def show_services(self) -> bool:
+        self.ui.banner("Supported Services", "Services Lixet can scan")
+        width = max([len(name) for name in self.supported_services] + [len(alias) for alias in self.aliases])
+        for name, spec in self.supported_services.items():
+            label = self.ui.c(name.ljust(width), self.ui.BOLD + self.ui.CYAN)
+            print(f"  {label}  {spec['description']}")
+
+        if self.aliases:
+            self.ui.section("Aliases")
+            for alias, service_name in sorted(self.aliases.items()):
+                if service_name in self.supported_services:
+                    label = self.ui.c(alias.ljust(width), self.ui.BOLD)
+                    target = self.ui.c(service_name, self.ui.CYAN)
+                    print(f"  {label}  -> {target}")
+        return True
 
     def scan_service(self, service_name: str) -> bool:
         service_name = self._service_name(service_name)
