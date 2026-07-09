@@ -107,7 +107,7 @@ class LixetEngine:
 
         self._print_issues(service_name, issues)
         self._scan_summary(service_name, issues)
-        return self._handle_issues(service_name, issues)
+        return self._select_from_scan(service_name, issues)
 
     def run_doctor(self) -> bool:
         self.ui.banner("Lixet Doctor", "Scanning supported services")
@@ -133,7 +133,7 @@ class LixetEngine:
             self.ui.issue(idx, service_name, item)
 
         if self.yes:
-            return self._repair_grouped(items)
+            return self._repair_grouped(items, ask=False)
 
         if self.dry_run:
             return self._preview_grouped(items)
@@ -143,13 +143,32 @@ class LixetEngine:
             self.ui.status("info", "Doctor repair aborted by user.")
             return False
         if choice == "a":
-            return self._repair_grouped(items)
+            return self._repair_grouped(items, ask=True)
         try:
             selected = items[int(choice) - 1]
         except (ValueError, IndexError):
             self.ui.status("error", "Invalid selection.")
             return False
-        return self._handle_issues(selected[0], [selected[1]])
+        return self._repair_issue_set(selected[0], [selected[1]], ask=True)
+
+    def _select_from_scan(self, service_name: str, issues: list[dict]) -> bool:
+        if self.yes:
+            return self._repair_issue_set(service_name, issues, ask=False)
+        if self.dry_run:
+            return self._repair_issue_set(service_name, issues, ask=False)
+
+        choice = self.ui.prompt("\nChoose a problem number, 'a' for all repairable, or Enter to abort: ").strip().lower()
+        if not choice:
+            self.ui.status("info", "Scan repair aborted by user.")
+            return False
+        if choice == "a":
+            return self._repair_issue_set(service_name, issues, ask=True)
+        try:
+            selected = issues[int(choice) - 1]
+        except (ValueError, IndexError):
+            self.ui.status("error", "Invalid selection.")
+            return False
+        return self._repair_issue_set(service_name, [selected], ask=True)
 
     def _collect_issues(self, service_name: str, skip_missing: bool = False) -> list[dict] | None:
         spec = self.supported_services[service_name]
@@ -236,7 +255,7 @@ class LixetEngine:
             "No safe automatic repair available.",
         )
 
-    def _handle_issues(self, service_name: str, issues: list[dict]) -> bool:
+    def _repair_issue_set(self, service_name: str, issues: list[dict], ask: bool) -> bool:
         repairable = [item for item in issues if item.get("fixes")]
         for item in issues:
             if not item.get("fixes"):
@@ -244,35 +263,8 @@ class LixetEngine:
         if not repairable:
             return False
 
-        if self.yes or self.dry_run:
-            selected = repairable
-        else:
-            selected = self._select_repairs(repairable)
-            if not selected:
-                self.ui.status("info", "No repairs selected.")
-                return False
-
-        fixed = self._prompt_and_repair(service_name, selected, ask=False)
-        return fixed and len(selected) == len(issues)
-
-    def _select_repairs(self, issues: list[dict]) -> list[dict]:
-        selected: list[dict] = []
-        for item in issues:
-            self.ui.section("Repair Decision")
-            self.ui.issue(None, "", item)
-            self.ui.kv("Proposed repair", "")
-            try:
-                for message in self.repair_manager.preview_fixes(item["file_path"], item["fixes"]):
-                    self.ui.bullet(message)
-            except Exception as exc:
-                self.ui.status("error", f"Cannot preview repair: {exc}")
-                continue
-            choice = self.ui.prompt("Repair this issue? [y/N]: ").strip().lower()
-            if choice in {"y", "yes"}:
-                selected.append(item)
-            else:
-                self.ui.status("info", f"Skipped {item['code']}.")
-        return selected
+        fixed = self._prompt_and_repair(service_name, repairable, ask=ask and not self.yes)
+        return fixed and len(repairable) == len(issues)
 
     def _prompt_and_repair(self, service_name: str, issues: list[dict], ask: bool = True) -> bool:
         files_to_repair: dict[str, list[dict]] = {}
@@ -323,11 +315,11 @@ class LixetEngine:
                 self.ui.status("error", f"Restore failed for {file_path}: {exc}")
         return False
 
-    def _repair_grouped(self, items: list[tuple[str, dict]]) -> bool:
+    def _repair_grouped(self, items: list[tuple[str, dict]], ask: bool) -> bool:
         groups: dict[str, list[dict]] = defaultdict(list)
         for service_name, item in items:
             groups[service_name].append(item)
-        results = [self._handle_issues(service_name, issues) for service_name, issues in groups.items()]
+        results = [self._repair_issue_set(service_name, issues, ask=ask) for service_name, issues in groups.items()]
         return all(results)
 
     def _preview_grouped(self, items: list[tuple[str, dict]]) -> bool:
@@ -335,7 +327,7 @@ class LixetEngine:
         for service_name, item in items:
             groups[service_name].append(item)
         for service_name, issues in groups.items():
-            self._handle_issues(service_name, issues)
+            self._repair_issue_set(service_name, issues, ask=False)
         return False
 
     @staticmethod

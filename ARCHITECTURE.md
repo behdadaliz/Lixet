@@ -16,7 +16,7 @@ lixet
 lixet/
 |-- backup/       Backup and restore logic
 |-- cli/          Command parsing for lixet
-|-- core/         Scan, doctor, prompt, repair, and verification flow
+|-- core/         Scan, doctor, update, prompt, repair, and verification flow
 |-- repair/       Safe line-based file repair operations
 |-- services/     File inspection for supported Linux services
 |-- utils/        Shared CLI output helpers
@@ -48,6 +48,14 @@ lixet/
 ## `lixet doctor`
 
 `doctor` scans all supported services and lists detected issues. The user can choose one issue, all repairable issues, or skip repair.
+
+## `lixet --update`
+
+`--update` downloads the latest GitHub source archive and replaces the installed `/opt/lixet` copy. If replacement fails, the previous installed copy is restored.
+
+## `lixet --version`
+
+`--version` reads the latest version name from GitHub Releases. If no release exists, it falls back to GitHub tags.
 
 ---
 

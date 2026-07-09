@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from textwrap import wrap
 
 
@@ -18,6 +17,7 @@ class UI:
     BOLD = "\033[1m"
     DIM = "\033[2m"
     GRAY = "\033[90m"
+    BLUE = "\033[94m"
     RESET = "\033[0m"
 
     def __init__(self, no_color: bool = False) -> None:
@@ -25,15 +25,15 @@ class UI:
 
     def banner(self, title: str, subtitle: str | None = None) -> None:
         print()
-        print(self.c(f"== {title} ==", self.BOLD))
+        print(self.c(f"== {title} ==", self.BOLD + self.CYAN))
         if subtitle:
             print(self.c(subtitle, self.DIM))
         print()
 
     def section(self, title: str) -> None:
         print()
-        print(self.c(title, self.BOLD))
-        print(self.c("-" * len(title), self.DIM))
+        print(self.c(title, self.BOLD + self.CYAN))
+        print(self.c("-" * len(title), self.BLUE))
 
     def status(self, kind: str, message: str) -> None:
         colors = {
@@ -51,15 +51,15 @@ class UI:
             "skip": "SKIP",
         }
         label = self.c(f"[{labels.get(kind, kind.upper())}]", colors.get(kind, ""))
-        print(f"{label} {message}")
+        print(f"{label} {self.c(message, colors.get(kind, ''))}")
 
     def issue(self, idx: int | None, service: str, item: dict) -> None:
         sev = str(item.get("severity", "info")).lower()
         label = self.severity(sev)
         if idx is None:
-            head = f"{label} {service + ' - ' if service else ''}{item['code']}"
+            head = f"{label} {service + ' - ' if service else ''}{self.c(item['code'], self.BOLD)}"
         else:
-            head = f"{idx}. {label} {service} - {item['code']}"
+            head = f"{self.c(str(idx) + '.', self.BOLD)} {label} {self.c(service, self.BOLD)} - {self.c(item['code'], self.BOLD)}"
         print(head)
         self.kv("Problem", item["description"])
         self.kv("Location", self.location(item))
@@ -73,18 +73,18 @@ class UI:
             self.kv("Repair", item.get("safety_note") or "No safe automatic repair available.")
 
     def kv(self, key: str, value: str) -> None:
-        print(f"  {self.c(key + ':', self.BOLD)} {value}")
+        print(f"  {self.c(key + ':', self.BOLD + self.CYAN)} {value}")
 
     def bullet(self, text: str) -> None:
         lines = wrap(text, width=88, subsequent_indent="      ") or [text]
-        print(f"  - {lines[0]}")
+        print(f"  {self.c('-', self.CYAN)} {lines[0]}")
         for line in lines[1:]:
             print(line)
 
     def evidence(self, text: str) -> None:
         print(f"  {self.c('Evidence:', self.BOLD)}")
         for line in text.strip().splitlines():
-            print(f"    {line}")
+            print(f"    {self.c(line, self.GRAY)}")
 
     def prompt(self, text: str) -> str:
         return input(self.c(text, self.BOLD))
@@ -125,4 +125,4 @@ class UI:
     def _supports_color() -> bool:
         if os.environ.get("NO_COLOR"):
             return False
-        return sys.stdout.isatty() and os.environ.get("TERM") not in {None, "", "dumb"}
+        return True

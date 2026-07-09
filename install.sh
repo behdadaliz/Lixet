@@ -2,8 +2,25 @@
 # GitHub: https://github.com/behdadaliz/Lixet.git | Author: behdadaliz
 set -eu
 
+RED='\033[91m'
+GREEN='\033[92m'
+CYAN='\033[96m'
+RESET='\033[0m'
+
+ok() {
+    printf '%b\n' "${GREEN}[OK]${RESET} $1"
+}
+
+info() {
+    printf '%b\n' "${CYAN}[INFO]${RESET} $1"
+}
+
+err() {
+    printf '%b\n' "${RED}[ERR]${RESET} $1" >&2
+}
+
 if [ "$(id -u)" -ne 0 ]; then
-    echo "Installation requires root privileges. Try: sudo sh install.sh" >&2
+    err "Installation requires root privileges. Try: sudo sh install.sh"
     exit 1
 fi
 
@@ -13,7 +30,7 @@ MAIN_SCRIPT="$INSTALL_DIR/main.py"
 BIN_PATH="/usr/local/bin/lixet"
 
 if [ ! -f "$BASE_DIR/main.py" ]; then
-    echo "Could not find entry point: $BASE_DIR/main.py" >&2
+    err "Could not find entry point: $BASE_DIR/main.py"
     exit 1
 fi
 
@@ -38,5 +55,5 @@ tar \
 
 chmod +x "$MAIN_SCRIPT"
 ln -sf "$MAIN_SCRIPT" "$BIN_PATH"
-echo "Installed lixet -> $MAIN_SCRIPT"
-echo "Command available as: lixet"
+ok "Installed lixet -> $MAIN_SCRIPT"
+info "Command available as: lixet"

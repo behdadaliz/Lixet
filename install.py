@@ -14,11 +14,27 @@ BIN_PATH = Path("/usr/local/bin/lixet")
 INSTALL_DIR = Path("/opt/lixet")
 SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "env", "developer", "docker", "tests"}
 SKIP_NAMES = {".env"}
+RED = "\033[91m"
+GREEN = "\033[92m"
+CYAN = "\033[96m"
+RESET = "\033[0m"
+
+
+def color(text: str, code: str) -> str:
+    return f"{code}{text}{RESET}"
+
+
+def ok(message: str) -> None:
+    print(f"{color('[OK]', GREEN)} {message}")
+
+
+def info(message: str) -> None:
+    print(f"{color('[INFO]', CYAN)} {message}")
 
 
 def require_root() -> None:
     if os.geteuid() != 0:
-        raise SystemExit("Installation requires root privileges. Try: sudo sh install.sh")
+        raise SystemExit(f"{color('[ERR]', RED)} Installation requires root privileges. Try: sudo sh install.sh")
 
 
 def install() -> None:
@@ -40,20 +56,20 @@ def install() -> None:
     if BIN_PATH.exists() or BIN_PATH.is_symlink():
         BIN_PATH.unlink()
     BIN_PATH.symlink_to(main_script)
-    print(f"Installed lixet -> {main_script}")
-    print("Command available as: lixet")
+    ok(f"Installed lixet -> {main_script}")
+    info("Command available as: lixet")
 
 
 def uninstall() -> None:
     require_root()
     if BIN_PATH.exists() or BIN_PATH.is_symlink():
         BIN_PATH.unlink()
-        print(f"Removed {BIN_PATH}")
+        ok(f"Removed {BIN_PATH}")
     else:
-        print(f"{BIN_PATH} is not installed")
+        info(f"{BIN_PATH} is not installed")
     if INSTALL_DIR.exists():
         shutil.rmtree(INSTALL_DIR)
-        print(f"Removed {INSTALL_DIR}")
+        ok(f"Removed {INSTALL_DIR}")
 
 
 def _skip(path: Path) -> bool:

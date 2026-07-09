@@ -46,15 +46,14 @@ class DNSValidator:
             return
         seen: set[str] = set()
         valid_count = 0
+        has_valid = any(self._valid_ip(item["value"]) for item in items)
+        invalid_seen = 0
         for item in items:
             value = item["value"]
-            try:
-                ipaddress.ip_address(value)
-                valid = True
-            except ValueError:
-                valid = False
+            valid = self._valid_ip(value)
             if not valid:
-                action = "replace" if len(items) == 1 else "delete"
+                invalid_seen += 1
+                action = "delete" if has_valid or invalid_seen > 1 else "replace"
                 fix = {"action": action, "line_number": item["line_number"]}
                 if action == "replace":
                     fix["content"] = "nameserver 1.1.1.1"
@@ -67,6 +66,14 @@ class DNSValidator:
             valid_count += 1
             if valid_count > 3:
                 issues.append(self._issue("DNS_TOO_MANY_NAMESERVERS", "low", "resolv.conf has more than three nameservers.", [{"action": "delete", "line_number": item["line_number"]}], item["line_number"]))
+
+    @staticmethod
+    def _valid_ip(value: str) -> bool:
+        try:
+            ipaddress.ip_address(value)
+            return True
+        except ValueError:
+            return False
 
     def _check_domain_search(self, rows: list[dict], issues: list[dict]) -> None:
         has_domain = any(row["is_active"] and row["text"].split()[:1] == ["domain"] for row in rows)

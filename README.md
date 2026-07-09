@@ -25,6 +25,12 @@ lixet scan ssh
 lixet doctor
 ```
 
+To update Lixet later:
+
+```bash
+sudo lixet --update
+```
+
 To uninstall:
 
 ```bash
@@ -48,6 +54,8 @@ lixet scan networking
 lixet scan systemd
 ```
 
+When issues are found, Lixet lets you choose one problem number, choose all repairable problems, or skip repair.
+
 Preview repairs without changing files:
 
 ```bash
@@ -58,6 +66,12 @@ Disable colored output:
 
 ```bash
 lixet --no-color scan ssh
+```
+
+Show the latest version name from GitHub:
+
+```bash
+lixet --version
 ```
 
 Apply supported repairs without prompting:
@@ -75,6 +89,14 @@ lixet doctor
 ```
 
 Lixet lists detected problems and lets you choose what to repair.
+
+## Update
+
+Update the installed copy:
+
+```bash
+sudo lixet --update
+```
 
 ---
 
@@ -101,14 +123,17 @@ Example repair prompt:
   Location: /etc/ssh/sshd_config:1
   Repair: replace 'Port 22'
 
+Choose a problem number, 'a' for all repairable, or Enter to abort: 1
+
 Planned Changes
 ---------------
   File: /etc/ssh/sshd_config
   - replace line 1: Port nope -> Port 22
-Repair this issue? [y/N]:
+
+Apply repairs? [Y/n]:
 ```
 
-Press `y` to apply the repair, or press Enter to skip it.
+Choose a problem number to repair one issue, choose `a` for all repairable issues, or press Enter to skip.
 
 ---
 

@@ -19,7 +19,10 @@ def main() -> int:
     try:
         return parse_and_execute(sys.argv[1:])
     except KeyboardInterrupt:
-        print("\n[INFO] Operation cancelled by user.")
+        from utils.ui import UI
+
+        print()
+        UI().status("info", "Operation cancelled by user.")
         return 130
 
 
