@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -23,19 +21,32 @@ from validators.nginx_validator import NginxValidator
 from validators.ssh_validator import SSHValidator
 from validators.systemd_validator import SystemdValidator
 from validators.ufw_validator import UFWValidator
+from validators.helpers import run_command
+from validators.helpers import issue as make_issue
 from utils.ui import UI
 
 
 class LixetEngine:
     """Run the deterministic Inspection -> Validation -> Backup -> Repair workflow."""
 
-    def __init__(self, dry_run: bool = False, yes: bool = False, config_path: str | None = None) -> None:
+    def __init__(
+        self,
+        dry_run: bool = False,
+        yes: bool = False,
+        config_path: str | None = None,
+        no_color: bool = False,
+    ) -> None:
         self.dry_run = dry_run
         self.yes = yes
         self.config_path = config_path
         self.backup_manager = BackupManager()
         self.repair_manager = RepairManager()
-        self.ui = UI()
+        self.ui = UI(no_color=no_color)
+        self.aliases = {
+            "sshd": "ssh",
+            "openssh": "ssh",
+            "network": "networking",
+        }
         self.supported_services = {
             "ssh": {
                 "service": SSHService,
@@ -78,10 +89,11 @@ class LixetEngine:
             self.ui.status("warn", "Dry run enabled. No files will be modified.")
 
     def scan_service(self, service_name: str) -> bool:
-        service_name = service_name.lower()
+        service_name = self._service_name(service_name)
         self.ui.banner(f"Scanning {service_name}", "Deterministic configuration inspection")
         if service_name not in self.supported_services:
-            self.ui.status("error", f"Service '{service_name}' is not supported yet.")
+            self.ui.status("error", f"Service '{service_name}' is not supported.")
+            self.ui.kv("Supported", ", ".join(self.supported_services))
             return False
 
         issues = self._collect_issues(service_name)
@@ -90,20 +102,29 @@ class LixetEngine:
 
         if not issues:
             self.ui.status("ok", f"No issues detected in {service_name}.")
+            self._scan_summary(service_name, [])
             return True
 
         self._print_issues(service_name, issues)
+        self._scan_summary(service_name, issues)
         return self._handle_issues(service_name, issues)
 
     def run_doctor(self) -> bool:
         self.ui.banner("Lixet Doctor", "Scanning supported services")
         items: list[tuple[str, dict]] = []
+        scanned: list[str] = []
+        skipped: list[str] = []
         for service_name in self.supported_services:
             issues = self._collect_issues(service_name, skip_missing=True)
+            if issues is None:
+                skipped.append(service_name)
+                continue
+            scanned.append(service_name)
             if issues:
                 items.extend((service_name, item) for item in issues)
+        items = self._sort_items(items)
 
-        self.ui.section("Doctor Summary")
+        self._doctor_summary(items, scanned, skipped)
         if not items:
             self.ui.status("ok", "No issues detected in supported services.")
             return True
@@ -141,9 +162,10 @@ class LixetEngine:
         except FileNotFoundError as exc:
             if skip_missing and not self.config_path:
                 self.ui.status("skip", f"{service_name}: {exc}")
-                return []
-            print(self.ui.c(f"[ERR] Inspection failed: {exc}", self.ui.RED), file=sys.stderr)
-            return None
+                return None
+            return [self._inspection_issue(service_name, config_path, str(exc), "CONFIG_NOT_FOUND")]
+        except PermissionError as exc:
+            return [self._inspection_issue(service_name, config_path, str(exc), "CONFIG_UNREADABLE")]
         except Exception as exc:
             print(self.ui.c(f"[ERR] Inspection failed: {exc}", self.ui.RED), file=sys.stderr)
             return None
@@ -155,8 +177,64 @@ class LixetEngine:
 
     @staticmethod
     def _sort_issues(issues: list[dict]) -> list[dict]:
-        rank = {"high": 0, "medium": 1, "low": 2, "info": 3}
-        return sorted(issues, key=lambda item: (rank.get(item.get("severity", "info"), 4), item.get("line_number") or 0, item.get("code", "")))
+        return sorted(issues, key=lambda item: LixetEngine._issue_key(item))
+
+    @staticmethod
+    def _sort_items(items: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
+        return sorted(items, key=lambda pair: (LixetEngine._issue_key(pair[1]), pair[0]))
+
+    @staticmethod
+    def _issue_key(item: dict) -> tuple[int, int, str]:
+        rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+        return (rank.get(str(item.get("severity", "info")).lower(), 5), item.get("line_number") or 0, item.get("code", ""))
+
+    def _scan_summary(self, service_name: str, issues: list[dict]) -> None:
+        self.ui.section("Scan Summary")
+        self.ui.kv("Service", service_name)
+        self.ui.kv("Status", "healthy" if not issues else "issues found")
+        self.ui.kv("Issues", self._count_text(issues))
+        if issues:
+            self.ui.kv("Repairable", str(sum(1 for item in issues if item.get("fixes"))))
+
+    def _doctor_summary(self, items: list[tuple[str, dict]], scanned: list[str], skipped: list[str]) -> None:
+        self.ui.section("Doctor Summary")
+        healthy = [name for name in scanned if not any(svc == name for svc, _ in items)]
+        self.ui.kv("Services scanned", ", ".join(scanned) if scanned else "none")
+        if skipped:
+            self.ui.kv("Services skipped", ", ".join(skipped))
+        self.ui.kv("Healthy services", ", ".join(healthy) if healthy else "none")
+        self.ui.kv("Issues found", self._count_text([item for _, item in items]))
+        self.ui.kv("Repairable", str(sum(1 for _, item in items if item.get("fixes"))))
+
+    @staticmethod
+    def _count_text(issues: list[dict]) -> str:
+        if not issues:
+            return "none"
+        order = ["critical", "high", "medium", "low", "info"]
+        parts = []
+        for sev in order:
+            count = sum(1 for item in issues if str(item.get("severity", "")).lower() == sev)
+            if count:
+                parts.append(f"{count} {sev}")
+        return ", ".join(parts) if parts else str(len(issues))
+
+    def _service_name(self, name: str) -> str:
+        key = name.lower()
+        return self.aliases.get(key, key)
+
+    @staticmethod
+    def _inspection_issue(service_name: str, config_path: str, evidence: str, suffix: str) -> dict:
+        return make_issue(
+            f"{service_name.upper()}_{suffix}",
+            "high",
+            "Configuration inspection failed.",
+            config_path,
+            [],
+            None,
+            service_name,
+            evidence,
+            "No safe automatic repair available.",
+        )
 
     def _handle_issues(self, service_name: str, issues: list[dict]) -> bool:
         repairable = [item for item in issues if item.get("fixes")]
@@ -213,7 +291,7 @@ class LixetEngine:
 
         if self.dry_run:
             self.ui.status("warn", "Repair preview complete. No files changed.")
-            return True
+            return False
 
         if ask:
             choice = self.ui.prompt("\nApply repairs? [Y/n]: ").strip().lower()
@@ -273,43 +351,38 @@ class LixetEngine:
         return True
 
     def _verify_ssh(self, paths: list[str]) -> bool:
-        sshd = shutil.which("sshd")
-        if not sshd:
+        config_path = paths[0]
+        result = run_command(["sshd", "-t", "-f", config_path])
+        if not result:
             self.ui.status("warn", "sshd not found. Skipped external syntax verification.")
             return True
-        config_path = paths[0]
-        result = subprocess.run([sshd, "-t", "-f", config_path], text=True, capture_output=True, check=False)
-        if result.returncode == 0:
+        if result["returncode"] == 0:
             self.ui.status("ok", "sshd syntax verification passed.")
             return True
-        self.ui.status("error", f"sshd syntax verification failed: {result.stderr.strip()}")
+        self.ui.status("error", f"sshd syntax verification failed: {result['evidence']}")
         return False
 
     def _verify_nginx(self, paths: list[str]) -> bool:
-        nginx = shutil.which("nginx")
-        if not nginx:
+        result = run_command(["nginx", "-t", "-c", paths[0]])
+        if not result:
             self.ui.status("warn", "nginx not found. Skipped external syntax verification.")
             return True
-        result = subprocess.run([nginx, "-t", "-c", paths[0]], text=True, capture_output=True, check=False)
-        if result.returncode == 0:
+        if result["returncode"] == 0:
             self.ui.status("ok", "nginx syntax verification passed.")
             return True
-        msg = (result.stderr or result.stdout).strip()
-        self.ui.status("error", f"nginx syntax verification failed: {msg}")
+        self.ui.status("error", f"nginx syntax verification failed: {result['evidence']}")
         return False
 
     def _verify_systemd(self, paths: list[str]) -> bool:
-        tool = shutil.which("systemd-analyze")
-        if not tool:
-            self.ui.status("warn", "systemd-analyze not found. Skipped external unit verification.")
-            return True
         files = [path for path in paths if Path(path).is_file()]
         if not files:
             return True
-        result = subprocess.run([tool, "verify", *files], text=True, capture_output=True, check=False)
-        if result.returncode == 0:
+        result = run_command(["systemd-analyze", "verify", *files])
+        if not result:
+            self.ui.status("warn", "systemd-analyze not found. Skipped external unit verification.")
+            return True
+        if result["returncode"] == 0:
             self.ui.status("ok", "systemd unit verification passed.")
             return True
-        msg = (result.stderr or result.stdout).strip()
-        self.ui.status("error", f"systemd unit verification failed: {msg}")
+        self.ui.status("error", f"systemd unit verification failed: {result['evidence']}")
         return False

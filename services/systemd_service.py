@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from services.text_service import TextFileService
+from validators.helpers import run_command
 
 
 class SystemdService:
@@ -19,7 +20,12 @@ class SystemdService:
         paths = sorted(root.glob("*.service")) if root.is_dir() else [root]
         if not paths:
             raise FileNotFoundError(f"No service units found in: {self.config_path}")
-        return {"file_path": str(root), "units": [self._unit(path) for path in paths if path.is_file()]}
+        return {
+            "file_path": str(root),
+            "units": [self._unit(path) for path in paths if path.is_file()],
+            "failed_units": run_command(["systemctl", "--failed", "--no-pager"], timeout=5),
+            "system_state": run_command(["systemctl", "is-system-running"], timeout=5),
+        }
 
     @staticmethod
     def _unit(path: Path) -> dict:

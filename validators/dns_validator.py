@@ -15,12 +15,19 @@ class DNSValidator:
     def run_rules(self, data: dict) -> list[dict]:
         rows = data["lines"]
         issues: list[dict] = []
+        self._check_empty(rows, issues)
         self._check_nameservers(rows, issues)
         self._check_domain_search(rows, issues)
+        self._check_runtime(data, issues)
         return issues
 
     def _issue(self, code: str, severity: str, desc: str, fixes: list[dict] | None = None, line: int | None = None) -> dict:
-        return issue(code, severity, desc, self.file_path, fixes, line)
+        return issue(code, severity, desc, self.file_path, fixes, line, "dns")
+
+    def _check_empty(self, rows: list[dict], issues: list[dict]) -> None:
+        if rows:
+            return
+        issues.append(self._issue("DNS_EMPTY_RESOLV_CONF", "high", "resolv.conf is empty."))
 
     def _nameservers(self, rows: list[dict]) -> list[dict]:
         out = []
@@ -66,3 +73,19 @@ class DNSValidator:
         has_search = any(row["is_active"] and row["text"].split()[:1] == ["search"] for row in rows)
         if has_domain and has_search:
             issues.append(self._issue("DNS_DOMAIN_SEARCH_CONFLICT", "medium", "Both domain and search are set; resolver behavior depends on line order."))
+
+    def _check_runtime(self, data: dict, issues: list[dict]) -> None:
+        getent = data.get("getent")
+        if getent and getent["returncode"] != 0:
+            issues.append(issue(
+                "DNS_LOOKUP_CHECK_FAILED",
+                "low",
+                "A simple hostname lookup did not succeed. This may be DNS, network, or offline state.",
+                self.file_path,
+                [],
+                None,
+                "dns",
+                getent.get("evidence") or "getent hosts example.com failed.",
+                "No automatic repair is applied.",
+                getent.get("command"),
+            ))

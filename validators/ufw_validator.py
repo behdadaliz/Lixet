@@ -19,13 +19,48 @@ class UFWValidator:
     def run_rules(self, data: dict) -> list[dict]:
         rows = data["lines"]
         issues: list[dict] = []
+        self._check_runtime_status(data, issues)
+        if data.get("missing_config"):
+            if not any(item.get("code") == "UFW_NOT_INSTALLED" for item in issues):
+                issues.append(issue(
+                    "UFW_CONFIG_NOT_FOUND",
+                    "medium",
+                    "UFW configuration file was not found.",
+                    self.file_path,
+                    [],
+                    None,
+                    "ufw",
+                    "The configured ufw.conf path does not exist.",
+                    "No automatic firewall repair is applied.",
+                ))
+            return issues
         self._check_bool(rows, issues, "ENABLED", "no", required=True)
         self._check_bool(rows, issues, "IPV6", "yes", required=False)
         self._check_policies(rows, issues)
         return issues
 
     def _issue(self, code: str, severity: str, desc: str, fixes: list[dict] | None = None, line: int | None = None) -> dict:
-        return issue(code, severity, desc, self.file_path, fixes, line)
+        return issue(code, severity, desc, self.file_path, fixes, line, "ufw")
+
+    def _check_runtime_status(self, data: dict, issues: list[dict]) -> None:
+        status = data.get("ufw_status")
+        if not status:
+            issues.append(self._issue("UFW_NOT_INSTALLED", "info", "ufw command is not available on this system."))
+            return
+        evidence = status.get("evidence", "")
+        if status["returncode"] != 0:
+            issues.append(issue("UFW_STATUS_FAILED", "low", "Could not read UFW runtime status.", self.file_path, [], None, "ufw", evidence, "No safe automatic repair available.", status.get("command")))
+            return
+        low = evidence.lower()
+        if "status: inactive" in low:
+            issues.append(issue("UFW_INACTIVE", "info", "UFW is inactive.", self.file_path, [], None, "ufw", evidence, "No repair needed unless you intend to enable the firewall.", status.get("command")))
+            return
+        if "status: active" in low and not self._ssh_allowed(low):
+            issues.append(issue("UFW_SSH_NOT_ALLOWED", "high", "UFW is active, but no obvious SSH allow rule was found.", self.file_path, [], None, "ufw", evidence, "No automatic firewall repair is applied.", status.get("command")))
+
+    @staticmethod
+    def _ssh_allowed(text: str) -> bool:
+        return "openssh" in text or "22/tcp" in text or "22 " in text
 
     def _items(self, rows: list[dict], key: str) -> list[dict]:
         out = []

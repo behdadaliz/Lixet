@@ -23,6 +23,7 @@ class NginxValidator:
         rows = data["lines"]
         issues: list[dict] = []
         self._check_config_test(data, issues)
+        self._check_empty_config(rows, issues)
         self._check_braces(rows, issues)
         self._check_semicolons(rows, issues)
         self._check_worker_processes(rows, issues)
@@ -43,7 +44,7 @@ class NginxValidator:
         if match:
             file_path = match.group("file")
             line_number = int(match.group("line"))
-        issues.append(issue(
+        item = issue(
             "NGINX_CONFIG_TEST_FAILED",
             "high",
             "Nginx configuration test failed.",
@@ -52,7 +53,18 @@ class NginxValidator:
             line_number,
             "nginx",
             evidence,
-        ))
+            "No safe automatic repair available.",
+            test.get("command"),
+        )
+        directive = first_match(r"unknown directive\s+\"?(?P<directive>[A-Za-z0-9_:-]+)\"?", evidence)
+        if directive:
+            item["directive"] = directive.group("directive")
+        issues.append(item)
+
+    def _check_empty_config(self, rows: list[dict], issues: list[dict]) -> None:
+        if rows:
+            return
+        issues.append(self._issue("NGINX_EMPTY_CONFIG", "high", "Nginx configuration file is empty."))
 
     def _clean(self, row: dict) -> str:
         txt = row["text"]

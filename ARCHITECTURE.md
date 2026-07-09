@@ -19,7 +19,7 @@ lixet/
 |-- core/         Scan, doctor, prompt, repair, and verification flow
 |-- repair/       Safe line-based file repair operations
 |-- services/     File inspection for supported Linux services
-|-- utils/        Shared utilities
+|-- utils/        Shared CLI output helpers
 |-- validators/   Deterministic validation rules
 |-- install.py    Python installer and uninstaller
 |-- install.sh    Simple Linux installer
@@ -39,7 +39,7 @@ lixet/
 3. `core/` selects the requested service.
 4. `services/` reads the target configuration.
 5. `validators/` returns deterministic issues and proposed repairs.
-6. `core/` shows the issue and planned repair.
+6. `core/` orders issues by severity and shows clean CLI output.
 7. If approved, `backup/` creates a backup.
 8. `repair/` applies the exact line-based change.
 9. `core/` verifies the result when a verifier is available.
@@ -57,6 +57,8 @@ Lixet is conservative by design.
 
 - Validators never edit files directly.
 - Validators use real system tools such as `sshd -t` and `nginx -t` when available.
+- Issues are ordered globally by severity: critical, high, medium, low, info.
+- Non-repairable issues are shown with evidence but are not offered as automatic fixes.
 - Repairs are explicit actions such as `replace`, `delete`, `append`, or `insert_before`.
 - Every write is preceded by a backup.
 - File writes are performed through a temporary file and atomic replace.
@@ -78,6 +80,7 @@ Lixet currently includes deterministic rules for:
 - DNS resolver nameserver validation
 - Hosts file localhost recovery
 - Systemd unit section, `ExecStart`, `Restart`, and `Type` validation
+- Runtime diagnostics for systemd, DNS, UFW, and basic networking when safe commands are available
 
 ---
 

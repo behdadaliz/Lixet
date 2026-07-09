@@ -13,6 +13,7 @@ class SSHValidator:
 
     VALID_PERMIT_ROOT_LOGIN = {"yes", "prohibit-password", "forced-commands-only", "no"}
     YES_NO = {"PasswordAuthentication", "PubkeyAuthentication", "X11Forwarding", "UsePAM"}
+    DUPLICATE_IMPORTANT = {"PermitRootLogin", "PasswordAuthentication", "PubkeyAuthentication"}
 
     def __init__(self, file_path: str = "/etc/ssh/sshd_config") -> None:
         self.file_path = file_path
@@ -22,10 +23,13 @@ class SSHValidator:
         issues: list[dict] = []
         if isinstance(data, dict):
             self._check_config_test(data, issues)
+        self._check_empty_config(parsed_data, issues)
         self._check_missing_port(parsed_data, issues)
         self._check_duplicate_ports(parsed_data, issues)
+        self._check_duplicate_important(parsed_data, issues)
         self._check_invalid_ports(parsed_data, issues)
         self._check_permit_root_login(parsed_data, issues)
+        self._check_risky_values(parsed_data, issues)
         self._check_yes_no(parsed_data, issues)
         self._check_listen_address(parsed_data, issues)
         return issues
@@ -59,7 +63,7 @@ class SSHValidator:
         if match:
             file_path = match.group("file")
             line_number = int(match.group("line"))
-        issues.append(issue(
+        item = issue(
             "SSH_CONFIG_TEST_FAILED",
             "high",
             "SSH configuration test failed.",
@@ -68,7 +72,18 @@ class SSHValidator:
             line_number,
             "ssh",
             evidence,
-        ))
+            "No safe automatic repair available.",
+            test.get("command"),
+        )
+        bad = first_match(r"Bad configuration option:\s*(?P<option>\S+)", evidence)
+        if bad:
+            item["bad_option"] = bad.group("option")
+        issues.append(item)
+
+    def _check_empty_config(self, parsed_data: list[dict], issues: list[dict]) -> None:
+        if parsed_data:
+            return
+        issues.append(self._issue("SSH_EMPTY_CONFIG", "high", "SSH configuration file is empty.", [], None))
 
     def _check_missing_port(self, parsed_data: list[dict], issues: list[dict]) -> None:
         if self._active(parsed_data, "Port", global_only=True):
@@ -90,10 +105,22 @@ class SSHValidator:
             issues.append(self._issue(
                 "SSH_DUPLICATE_PORT",
                 "medium",
-                f"Duplicate Port directive found with value '{duplicate['value']}'.",
+                f"Duplicate Port directive found with value '{duplicate['value']}'. OpenSSH normally uses the first active value.",
                 [{"action": "delete", "line_number": duplicate["line_number"]}],
                 duplicate["line_number"],
             ))
+
+    def _check_duplicate_important(self, parsed_data: list[dict], issues: list[dict]) -> None:
+        for name in self.DUPLICATE_IMPORTANT:
+            items = self._active(parsed_data, name, global_only=True)
+            for duplicate in items[1:]:
+                issues.append(self._issue(
+                    f"SSH_DUPLICATE_{name.upper()}",
+                    "medium",
+                    f"Duplicate {name} directive found. OpenSSH normally uses the first active value.",
+                    [],
+                    duplicate["line_number"],
+                ))
 
     def _check_invalid_ports(self, parsed_data: list[dict], issues: list[dict]) -> None:
         for port in self._active(parsed_data, "Port", global_only=True)[:1]:
@@ -119,6 +146,26 @@ class SSHValidator:
                     "high",
                     f"Invalid PermitRootLogin value '{item['value']}'.",
                     [{"action": "replace", "line_number": item["line_number"], "content": "PermitRootLogin prohibit-password"}],
+                    item["line_number"],
+                ))
+
+    def _check_risky_values(self, parsed_data: list[dict], issues: list[dict]) -> None:
+        for item in self._active(parsed_data, "PermitRootLogin", global_only=True)[:1]:
+            if str(item["value"]).lower() == "yes":
+                issues.append(self._issue(
+                    "SSH_ROOT_LOGIN_ENABLED",
+                    "medium",
+                    "PermitRootLogin is enabled. This can increase SSH exposure on public servers.",
+                    [],
+                    item["line_number"],
+                ))
+        for item in self._active(parsed_data, "PasswordAuthentication", global_only=True)[:1]:
+            if str(item["value"]).lower() == "yes":
+                issues.append(self._issue(
+                    "SSH_PASSWORD_AUTH_ENABLED",
+                    "medium",
+                    "PasswordAuthentication is enabled. Review this if the server is reachable from the internet.",
+                    [],
                     item["line_number"],
                 ))
 

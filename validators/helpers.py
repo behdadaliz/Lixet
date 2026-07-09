@@ -8,12 +8,26 @@ import shutil
 import subprocess
 
 
-def run_command(args: list[str]) -> dict | None:
+DEFAULT_TIMEOUT = 5
+
+
+def run_command(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> dict | None:
     if not shutil.which(args[0]):
         return None
-    result = subprocess.run(args, text=True, capture_output=True, check=False)
-    evidence = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
-    return {"returncode": result.returncode, "evidence": evidence}
+    try:
+        result = subprocess.run(args, text=True, capture_output=True, check=False, timeout=timeout)
+        evidence = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+        return {"returncode": result.returncode, "evidence": evidence, "command": " ".join(args), "timeout": False}
+    except subprocess.TimeoutExpired as exc:
+        evidence = f"Command timed out after {timeout}s: {' '.join(args)}"
+        if exc.stdout:
+            evidence += f"\n{str(exc.stdout).strip()}"
+        if exc.stderr:
+            evidence += f"\n{str(exc.stderr).strip()}"
+        return {"returncode": 124, "evidence": evidence, "command": " ".join(args), "timeout": True}
+    except OSError as exc:
+        evidence = f"Could not run command {' '.join(args)}: {exc}"
+        return {"returncode": 126, "evidence": evidence, "command": " ".join(args), "timeout": False}
 
 
 def issue(
@@ -25,7 +39,10 @@ def issue(
     line_number: int | None = None,
     service: str | None = None,
     evidence: str | None = None,
+    safety_note: str | None = None,
+    source_command: str | None = None,
 ) -> dict:
+    repairable = bool(fixes)
     return {
         "id": code,
         "code": code,
@@ -35,6 +52,9 @@ def issue(
         "file_path": file_path,
         "line_number": line_number,
         "evidence": evidence,
+        "repairable": repairable,
+        "safety_note": safety_note,
+        "source_command": source_command,
         "fixes": fixes or [],
     }
 

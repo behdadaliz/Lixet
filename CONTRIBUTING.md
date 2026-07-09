@@ -13,6 +13,8 @@ Lixet is a deterministic recovery tool for Linux administrators. Changes should 
 - Prefer the Python standard library.
 - Do not modify system files without using the backup flow.
 - Keep repairs small, explicit, and explainable.
+- Include evidence for reported issues whenever a system command or parser result provides it.
+- Keep CLI output clean and useful for both colored terminals and plain logs.
 - Report uncertain problems instead of guessing a fix.
 
 ---
@@ -23,7 +25,7 @@ When adding support for a service:
 
 1. Add inspection logic under `services/`.
 2. Add deterministic rules under `validators/`.
-3. Return clear issue data: code, severity, description, file path, line number, and fixes when safe.
+3. Return clear issue data: code, severity, description, file path, line number, evidence, source command, and fixes when safe.
 4. Use repair actions supported by `repair/manager.py`.
 5. Add service registration in `core/engine.py`.
 6. Add verifier support when a reliable command exists.

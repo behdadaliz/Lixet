@@ -17,12 +17,50 @@ class SystemdValidator:
 
     def run_rules(self, data: dict) -> list[dict]:
         issues: list[dict] = []
+        self._check_system(data, issues)
         for unit in data["units"]:
             self._check_unit(unit, issues)
         return issues
 
     def _issue(self, code: str, severity: str, desc: str, path: str, fixes: list[dict] | None = None, line: int | None = None) -> dict:
-        return issue(code, severity, desc, path, fixes, line)
+        return issue(code, severity, desc, path, fixes, line, "systemd")
+
+    def _check_system(self, data: dict, issues: list[dict]) -> None:
+        failed = data.get("failed_units")
+        state = data.get("system_state")
+        if not failed:
+            issues.append(issue("SYSTEMD_COMMAND_MISSING", "info", "systemctl is not available; runtime systemd checks were skipped.", self.file_path, [], None, "systemd"))
+            return
+        if state and state["returncode"] != 0:
+            issues.append(issue(
+                "SYSTEMD_NOT_RUNNING",
+                "info",
+                "systemd does not appear to be the active init system in this environment.",
+                self.file_path,
+                [],
+                None,
+                "systemd",
+                state.get("evidence") or "systemctl is-system-running failed.",
+                "No automatic systemd repair is applied.",
+                state.get("command"),
+            ))
+        if failed["returncode"] != 0:
+            issues.append(issue(
+                "SYSTEMD_FAILED_UNITS_CHECK_FAILED",
+                "low",
+                "Could not inspect failed systemd units.",
+                self.file_path,
+                [],
+                None,
+                "systemd",
+                failed.get("evidence") or "systemctl --failed failed.",
+                "No automatic systemd repair is applied.",
+                failed.get("command"),
+            ))
+            return
+        evidence = failed.get("evidence", "")
+        if failed["returncode"] == 0 and "0 loaded units listed" not in evidence.lower() and "failed" in evidence.lower():
+            issues.append(issue("SYSTEMD_FAILED_UNITS", "medium", "systemctl reports failed units.", self.file_path, [], None, "systemd", evidence, "No automatic restart is performed.", failed.get("command")))
 
     def _check_unit(self, unit: dict, issues: list[dict]) -> None:
         path = unit["file_path"]

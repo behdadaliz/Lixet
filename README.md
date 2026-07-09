@@ -54,6 +54,12 @@ Preview repairs without changing files:
 lixet scan ssh --dry-run
 ```
 
+Disable colored output:
+
+```bash
+lixet --no-color scan ssh
+```
+
 Apply supported repairs without prompting:
 
 ```bash
@@ -90,10 +96,14 @@ If verification fails, Lixet restores the original file from backup.
 Example repair prompt:
 
 ```text
-Issue: high SSH_INVALID_PORT
-Description: Invalid Port value 'nope'. Must be an integer between 1 and 65535.
-Location: /etc/ssh/sshd_config:1
-Proposed repair:
+1. [HIGH] ssh - SSH_INVALID_PORT
+  Problem: Invalid Port value 'nope'. Must be an integer between 1 and 65535.
+  Location: /etc/ssh/sshd_config:1
+  Repair: replace 'Port 22'
+
+Planned Changes
+---------------
+  File: /etc/ssh/sshd_config
   - replace line 1: Port nope -> Port 22
 Repair this issue? [y/N]:
 ```
@@ -110,7 +120,7 @@ Lixet currently supports:
 - Nginx
 - UFW
 - DNS resolver configuration
-- Basic networking hosts file
+- Basic networking and hosts file checks
 - Systemd service units
 
 ---

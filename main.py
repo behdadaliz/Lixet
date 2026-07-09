@@ -19,7 +19,7 @@ def main() -> int:
     try:
         return parse_and_execute(sys.argv[1:])
     except KeyboardInterrupt:
-        print("\n[!] Operation cancelled by user.")
+        print("\n[INFO] Operation cancelled by user.")
         return 130
 
 
