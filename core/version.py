@@ -25,17 +25,19 @@ class VersionReporter:
         installed = read_installed_version()
         latest = fetch_github_version()
         latest_version = latest["version"] if latest else "not available"
-        url = latest.get("url") if latest else None
+        status = _status(installed, latest_version, latest is not None)
 
-        self._line("current version", installed)
-        self._line("latest version", latest_version)
-        self._line("url", str(url or "not available"))
-        self.ui.status("info", "If your installed copy is older, update it.")
-        print(f"  {self.ui.c('Update:', self.ui.BOLD + self.ui.CYAN)} sudo lixet --update")
+        self.ui.banner("Lixet Version")
+        self._line("Installed version", installed)
+        self._line("Latest release", latest_version)
+        self._line("Status", status)
+        print()
+        print(self.ui.c("Update command:", self.ui.BOLD + self.ui.CYAN))
+        print(f"  {self.ui.c('sudo lixet --update', self.ui.BOLD)}")
         return True
 
     def _line(self, key: str, value: str) -> None:
-        print(f"{self.ui.c(key + ':', self.ui.BOLD + self.ui.CYAN)} {value}")
+        print(f"{self.ui.c(key.ljust(18), self.ui.BOLD + self.ui.CYAN)}: {value}")
 
 
 def read_installed_version(root: Path | None = None) -> str:
@@ -54,7 +56,7 @@ def fetch_github_version(timeout: int = 6) -> dict | None:
         item = release[0]
         raw_tag = str(item.get("tag_name") or "").strip()
         raw_name = str(item.get("name") or "").strip()
-        version = raw_name or raw_tag
+        version = normalize_version(raw_tag) or normalize_version(raw_name)
         if version:
             return {
                 "version": version,
@@ -63,11 +65,12 @@ def fetch_github_version(timeout: int = 6) -> dict | None:
 
     tags = _fetch_json(TAGS_URL, timeout)
     if isinstance(tags, list) and tags:
-        version = str(tags[0].get("name") or "").strip()
+        version = normalize_version(str(tags[0].get("name") or "").strip())
         if version:
+            tag = str(tags[0].get("name") or "").strip()
             return {
                 "version": version,
-                "url": f"https://github.com/behdadaliz/Lixet/tree/{version}",
+                "url": f"https://github.com/behdadaliz/Lixet/tree/{tag}" if tag else None,
             }
     return None
 
@@ -97,3 +100,15 @@ def normalize_version(text: str) -> str | None:
     if "rc" in clean:
         return f"{version}-rc"
     return version
+
+
+def _status(installed: str, latest: str, checked: bool) -> str:
+    if not checked:
+        return "unable to check"
+    if latest == "not available":
+        return "release not published"
+    if installed == "unknown":
+        return "installed version unknown"
+    if installed == latest:
+        return "up to date"
+    return "update available"

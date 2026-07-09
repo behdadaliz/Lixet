@@ -31,19 +31,35 @@ class SystemdValidator:
         if not failed:
             issues.append(issue("SYSTEMD_COMMAND_MISSING", "info", "systemctl is not available; runtime systemd checks were skipped.", self.file_path, [], None, "systemd"))
             return
-        if state and state["returncode"] != 0:
-            issues.append(issue(
-                "SYSTEMD_NOT_RUNNING",
-                "info",
-                "systemd does not appear to be the active init system in this environment.",
-                self.file_path,
-                [],
-                None,
-                "systemd",
-                state.get("evidence") or "systemctl is-system-running failed.",
-                "No automatic systemd repair is applied.",
-                state.get("command"),
-            ))
+        if state:
+            state_text = (state.get("evidence") or "").strip()
+            state_low = state_text.lower()
+            if "degraded" in state_low:
+                issues.append(issue(
+                    "SYSTEMD_DEGRADED",
+                    "medium",
+                    "systemd is running in degraded state.",
+                    self.file_path,
+                    [],
+                    None,
+                    "systemd",
+                    state_text or "degraded",
+                    "No automatic systemd repair is applied.",
+                    state.get("command"),
+                ))
+            elif state["returncode"] != 0:
+                issues.append(issue(
+                    "SYSTEMD_UNAVAILABLE",
+                    "info",
+                    "systemd runtime state is unavailable in this environment.",
+                    self.file_path,
+                    [],
+                    None,
+                    "systemd",
+                    state_text or "systemctl is-system-running failed.",
+                    "No automatic systemd repair is applied.",
+                    state.get("command"),
+                ))
         if failed["returncode"] != 0:
             issues.append(issue(
                 "SYSTEMD_FAILED_UNITS_CHECK_FAILED",

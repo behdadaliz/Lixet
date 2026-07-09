@@ -132,6 +132,10 @@ class LixetEngine:
         for idx, (service_name, item) in enumerate(items, start=1):
             self.ui.issue(idx, service_name, item)
 
+        if not any(item.get("fixes") for _, item in items):
+            self.ui.status("info", "No safe automatic repairs are available.")
+            return False
+
         if self.yes:
             return self._repair_grouped(items, ask=False)
 
@@ -152,6 +156,10 @@ class LixetEngine:
         return self._repair_issue_set(selected[0], [selected[1]], ask=True)
 
     def _select_from_scan(self, service_name: str, issues: list[dict]) -> bool:
+        if not any(item.get("fixes") for item in issues):
+            self.ui.status("info", "No safe automatic repairs are available.")
+            return False
+
         if self.yes:
             return self._repair_issue_set(service_name, issues, ask=False)
         if self.dry_run:

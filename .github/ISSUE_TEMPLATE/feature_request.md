@@ -1,20 +1,39 @@
 ---
 name: Feature request
-about: Suggest a new feature or module for Lixet
-title: '[FEATURE] '
-labels: 'enhancement'
-assignees: ''
-
+about: Suggest an improvement for Lixet
+title: "[FEATURE] "
+labels: enhancement
+assignees: ""
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. "I'm always frustrated when trying to manually debug Nginx proxy configs..." or "It takes too long to find the broken line in..."
+## Problem
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen. How should this work in the terminal? (e.g., adding a new command like `lixet scan nginx` or a new flag like `--auto-fix`).
+What problem are you trying to solve?
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or tools you've considered (e.g., using bash scripts, Ansible, sed/awk, etc.).
+## Current workflow
 
-**Additional context**
-Add any other context, terminal output mockups, or screenshots about the feature request here.
+How do you handle this today? Include the Lixet command you use now, if any.
+
+```bash
+lixet ...
+```
+
+## Expected behavior
+
+What should Lixet do differently?
+
+## Why this is useful
+
+Who would benefit from this, and in what situation?
+
+## Alternatives tried
+
+What other tools, commands, scripts, or manual steps have you tried?
+
+## Safety considerations
+
+If this feature would read or modify configuration files, describe the risks. Should it be diagnostic only, or should it offer a repair after confirmation?
+
+## Additional context
+
+Add terminal output, config snippets, or mock output if helpful. Remove secrets and private data before posting.

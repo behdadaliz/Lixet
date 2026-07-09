@@ -1,26 +1,59 @@
 ---
 name: Bug report
-about: Report a bug in Lixet to help us improve
-title: '[BUG] '
-labels: 'bug'
-assignees: ''
-
+about: Report a problem with Lixet
+title: "[BUG] "
+labels: bug
+assignees: ""
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+## What happened?
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. What command did you run? (e.g., `lixet scan ssh`)
-2. What target or config file were you trying to analyze?
-3. What was the exact terminal output or error?
+Describe the problem clearly.
 
-**Expected behavior**
-A clear and concise description of what you expected Lixet to do.
+## Command
 
-**Terminal Logs / Screenshots**
-Please paste the terminal error logs here. You can use code blocks for better readability:
+Paste the exact command you ran.
+
 ```bash
-# Paste your logs here
+lixet ...
 ```
+
+## Environment
+
+- Linux distribution:
+- Python version:
+- Lixet version (`lixet --version`):
+- Installed with `sudo sh install.sh`? yes/no
+
+## Service or target
+
+- Service checked: ssh / nginx / ufw / dns / networking / systemd
+- Config path or target file, if relevant:
+
+## Expected behavior
+
+What did you expect Lixet to do?
+
+## Actual behavior
+
+What did Lixet do instead?
+
+## Terminal output
+
+Paste the full output. Use `--no-color` if the colored output is hard to read.
+
+```text
+paste output here
+```
+
+## Relevant config or logs
+
+Paste only the smallest useful snippet. Remove passwords, tokens, private keys, IPs, hostnames, or other private data before posting.
+
+```text
+paste snippet here
+```
+
+## Notes
+
+Add anything else that may help reproduce the problem.
