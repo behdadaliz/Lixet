@@ -14,7 +14,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from core.version import normalize_version, read_installed_version
+from core.version import read_installed_version, select_latest_release
 from utils.ui import UI
 
 
@@ -23,7 +23,7 @@ class LixetUpdater:
 
     INSTALL_DIR = Path("/opt/lixet")
     BIN_PATH = Path("/usr/local/bin/lixet")
-    RELEASES_URL = "https://api.github.com/repos/behdadaliz/Lixet/releases"
+    RELEASES_URL = "https://api.github.com/repos/behdadaliz/Lixet/releases?per_page=50"
     SOURCES = (
         ("main", "https://github.com/behdadaliz/Lixet/archive/refs/heads/main.zip"),
         ("master", "https://github.com/behdadaliz/Lixet/archive/refs/heads/master.zip"),
@@ -52,12 +52,12 @@ class LixetUpdater:
         try:
             with tempfile.TemporaryDirectory(prefix="lixet-update-") as tmp:
                 tmp_path = Path(tmp)
-                archive, channel, version = self._download(tmp_path)
+                archive, channel, version_name = self._download(tmp_path)
                 src = self._extract(archive, tmp_path)
                 if channel:
                     self._line("Update channel", channel)
                 self.ui.status("info", "Installing updated version...")
-                self._replace_install(src, version)
+                self._replace_install(src, version_name)
         except Exception as exc:
             self.ui.status("error", f"Update failed: {exc}")
             return False
@@ -104,9 +104,11 @@ class LixetUpdater:
         if not isinstance(releases, list) or not releases:
             return None
 
-        item = releases[0]
+        item = select_latest_release(releases)
+        if not item:
+            return None
         url = item.get("zipball_url")
-        name = normalize_version(str(item.get("tag_name") or "")) or normalize_version(str(item.get("name") or ""))
+        name = str(item.get("display") or item.get("tag") or item.get("version") or "").strip()
         if not url:
             return None
 

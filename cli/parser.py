@@ -68,7 +68,7 @@ def parse_and_execute(args: list[str]) -> int:
             Available commands:
               lixet                          Show this help page
               lixet --help                   Show this help page
-              lixet --version                Show installed Lixet version
+              lixet --version                Show installed and latest Lixet version
               sudo lixet --update            Update the installed Lixet version
               lixet scan <service>           Scan one service and offer safe repairs
               lixet scan <service> --dry-run Preview repairs without changing files
@@ -82,7 +82,7 @@ def parse_and_execute(args: list[str]) -> int:
         """),
     )
     parser.add_argument("--update", action="store_true", help="Update the installed Lixet version")
-    parser.add_argument("--version", action="store_true", help="Show installed Lixet version")
+    parser.add_argument("--version", action="store_true", help="Show installed and latest Lixet version")
     subparsers = parser.add_subparsers(dest="command", parser_class=partial(LixetArgumentParser, no_color=no_color))
 
     scan_parser = subparsers.add_parser("scan", parents=[common], help="Analyze a specific service")

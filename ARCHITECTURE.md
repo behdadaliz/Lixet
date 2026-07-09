@@ -26,7 +26,7 @@ lixet/
 |-- uninstall.sh  Simple Linux uninstaller
 |-- main.py       CLI entry point
 |-- manager.py    Compatibility import path
-`-- VERSION       Installed version string
+`-- VERSION       Installed version or release name
 ```
 
 ---
