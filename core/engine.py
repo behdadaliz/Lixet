@@ -10,16 +10,22 @@ from pathlib import Path
 from backup.manager import BackupError, BackupManager
 from repair.manager import RepairError, RepairManager
 from services.dns_service import DNSService
+from services.fstab_service import FstabService
 from services.networking_service import NetworkingService
 from services.nginx_service import NginxService
 from services.ssh_service import SSHService
+from services.sudoers_service import SudoersService
 from services.systemd_service import SystemdService
+from services.sysctl_service import SysctlService
 from services.ufw_service import UFWService
 from validators.dns_validator import DNSValidator
+from validators.fstab_validator import FstabValidator
 from validators.networking_validator import NetworkingValidator
 from validators.nginx_validator import NginxValidator
 from validators.ssh_validator import SSHValidator
+from validators.sudoers_validator import SudoersValidator
 from validators.systemd_validator import SystemdValidator
+from validators.sysctl_validator import SysctlValidator
 from validators.ufw_validator import UFWValidator
 from validators.helpers import run_command
 from validators.helpers import issue as make_issue
@@ -46,6 +52,8 @@ class LixetEngine:
             "sshd": "ssh",
             "openssh": "ssh",
             "network": "networking",
+            "hosts": "networking",
+            "firewall": "ufw",
         }
         self.supported_services = {
             "ssh": {
@@ -84,6 +92,24 @@ class LixetEngine:
                 "default": "/etc/systemd/system",
                 "verify": self._verify_systemd,
             },
+            "sudoers": {
+                "service": SudoersService,
+                "validator": SudoersValidator,
+                "default": "/etc/sudoers",
+                "verify": self._verify_sudoers,
+            },
+            "fstab": {
+                "service": FstabService,
+                "validator": FstabValidator,
+                "default": "/etc/fstab",
+                "verify": self._verify_fstab,
+            },
+            "sysctl": {
+                "service": SysctlService,
+                "validator": SysctlValidator,
+                "default": "/etc/sysctl.conf",
+                "verify": self._verify_true,
+            },
         }
         if self.dry_run:
             self.ui.status("warn", "Dry run enabled. No files will be modified.")
@@ -93,7 +119,7 @@ class LixetEngine:
         self.ui.banner(f"Scanning {service_name}", "Deterministic configuration inspection")
         if service_name not in self.supported_services:
             self.ui.status("error", f"Service '{service_name}' is not supported.")
-            self.ui.kv("Supported", ", ".join(self.supported_services))
+            self.ui.kv("Supported", ", ".join(sorted(self.supported_services)))
             return False
 
         issues = self._collect_issues(service_name)
@@ -132,12 +158,12 @@ class LixetEngine:
         for idx, (service_name, item) in enumerate(items, start=1):
             self.ui.issue(idx, service_name, item)
 
-        if not any(item.get("fixes") for _, item in items):
+        if not self._has_repairable([item for _, item in items]):
             self.ui.status("info", "No safe automatic repairs are available.")
             return False
 
         if self.yes:
-            return self._repair_grouped(items, ask=False)
+            return self._repair_grouped(items, mode="auto")
 
         if self.dry_run:
             return self._preview_grouped(items)
@@ -147,36 +173,36 @@ class LixetEngine:
             self.ui.status("info", "Doctor repair aborted by user.")
             return False
         if choice == "a":
-            return self._repair_grouped(items, ask=True)
+            return self._repair_grouped(items, mode="all")
         try:
             selected = items[int(choice) - 1]
         except (ValueError, IndexError):
             self.ui.status("error", "Invalid selection.")
             return False
-        return self._repair_issue_set(selected[0], [selected[1]], ask=True)
+        return self._repair_issue_set(selected[0], [selected[1]], mode="manual")
 
     def _select_from_scan(self, service_name: str, issues: list[dict]) -> bool:
-        if not any(item.get("fixes") for item in issues):
+        if not self._has_repairable(issues):
             self.ui.status("info", "No safe automatic repairs are available.")
             return False
 
         if self.yes:
-            return self._repair_issue_set(service_name, issues, ask=False)
+            return self._repair_issue_set(service_name, issues, mode="auto")
         if self.dry_run:
-            return self._repair_issue_set(service_name, issues, ask=False)
+            return self._repair_issue_set(service_name, issues, mode="dry")
 
         choice = self.ui.prompt("\nChoose a problem number, 'a' for all repairable, or Enter to abort: ").strip().lower()
         if not choice:
             self.ui.status("info", "Scan repair aborted by user.")
             return False
         if choice == "a":
-            return self._repair_issue_set(service_name, issues, ask=True)
+            return self._repair_issue_set(service_name, issues, mode="all")
         try:
             selected = issues[int(choice) - 1]
         except (ValueError, IndexError):
             self.ui.status("error", "Invalid selection.")
             return False
-        return self._repair_issue_set(service_name, [selected], ask=True)
+        return self._repair_issue_set(service_name, [selected], mode="manual")
 
     def _collect_issues(self, service_name: str, skip_missing: bool = False) -> list[dict] | None:
         spec = self.supported_services[service_name]
@@ -221,7 +247,7 @@ class LixetEngine:
         self.ui.kv("Status", "healthy" if not issues else "issues found")
         self.ui.kv("Issues", self._count_text(issues))
         if issues:
-            self.ui.kv("Repairable", str(sum(1 for item in issues if item.get("fixes"))))
+            self.ui.kv("Repairable", self._repairable_text(issues))
 
     def _doctor_summary(self, items: list[tuple[str, dict]], scanned: list[str], skipped: list[str]) -> None:
         self.ui.section("Doctor Summary")
@@ -231,7 +257,10 @@ class LixetEngine:
             self.ui.kv("Services skipped", ", ".join(skipped))
         self.ui.kv("Healthy services", ", ".join(healthy) if healthy else "none")
         self.ui.kv("Issues found", self._count_text([item for _, item in items]))
-        self.ui.kv("Repairable", str(sum(1 for _, item in items if item.get("fixes"))))
+        self.ui.kv("Repairable", self._repairable_text([item for _, item in items]))
+        if self._has_repairable([item for _, item in items]):
+            print()
+            self.ui.kv("Repair policy", "safe repairs can be applied normally; guarded repairs require manual confirmation.")
 
     @staticmethod
     def _count_text(issues: list[dict]) -> str:
@@ -244,6 +273,36 @@ class LixetEngine:
             if count:
                 parts.append(f"{count} {sev}")
         return ", ".join(parts) if parts else str(len(issues))
+
+    @staticmethod
+    def _is_repairable(item: dict) -> bool:
+        return bool(item.get("repairable") and item.get("fixes") and item.get("repair_level") in {"safe", "guarded"})
+
+    @classmethod
+    def _has_repairable(cls, issues: list[dict]) -> bool:
+        return any(cls._is_repairable(item) for item in issues)
+
+    @classmethod
+    def _repairable_text(cls, issues: list[dict]) -> str:
+        safe = sum(1 for item in issues if cls._is_repairable(item) and item.get("repair_level") == "safe")
+        guarded = sum(1 for item in issues if cls._is_repairable(item) and item.get("repair_level") == "guarded")
+        parts = []
+        if safe:
+            parts.append(f"{safe} safe")
+        if guarded:
+            parts.append(f"{guarded} guarded")
+        return ", ".join(parts) if parts else "0"
+
+    def _confirm_guarded(self, item: dict) -> bool:
+        self.ui.status("warn", f"Guarded repair requires manual confirmation: {item['code']}")
+        if item.get("risk_note"):
+            self.ui.kv("Risk", str(item["risk_note"]))
+        if item.get("safety_note"):
+            self.ui.kv("Safety", str(item["safety_note"]))
+        if item.get("rollback_note"):
+            self.ui.kv("Rollback", str(item["rollback_note"]))
+        choice = self.ui.prompt("Apply this guarded repair? [y/N]: ").strip().lower()
+        return choice in {"y", "yes"}
 
     def _service_name(self, name: str) -> str:
         key = name.lower()
@@ -263,18 +322,49 @@ class LixetEngine:
             "No safe automatic repair available.",
         )
 
-    def _repair_issue_set(self, service_name: str, issues: list[dict], ask: bool) -> bool:
-        repairable = [item for item in issues if item.get("fixes")]
+    def _repair_issue_set(self, service_name: str, issues: list[dict], mode: str) -> bool:
+        repairable = [item for item in issues if self._is_repairable(item)]
         for item in issues:
-            if not item.get("fixes"):
+            if not self._is_repairable(item):
                 self.ui.status("info", f"No safe automatic repair is available for {item['code']}.")
         if not repairable:
             return False
 
-        fixed = self._prompt_and_repair(service_name, repairable, ask=ask and not self.yes)
-        return fixed and len(repairable) == len(issues)
+        safe = [item for item in repairable if item.get("repair_level") == "safe"]
+        guarded = [item for item in repairable if item.get("repair_level") == "guarded"]
+
+        if mode == "auto":
+            for item in guarded:
+                self.ui.status("info", f"Skipped guarded repair: requires manual confirmation. ({item['code']})")
+            fixed_safe = self._prompt_and_repair(service_name, safe, ask=False) if safe else False
+            return fixed_safe and not guarded and len(safe) == len(issues)
+
+        if mode == "dry":
+            return self._prompt_and_repair(service_name, repairable, ask=False)
+
+        if mode == "all":
+            fixed_safe = self._prompt_and_repair(service_name, safe, ask=True) if safe else False
+            fixed_guarded = False
+            if guarded:
+                choice = self.ui.prompt("\nGuarded repairs require manual confirmation. Review guarded repairs? [y/N]: ").strip().lower()
+                if choice in {"y", "yes"}:
+                    fixed_guarded = all(self._repair_issue_set(service_name, [item], mode="manual") for item in guarded)
+                else:
+                    for item in guarded:
+                        self.ui.status("info", f"Skipped guarded repair: requires manual confirmation. ({item['code']})")
+            return fixed_safe or fixed_guarded
+
+        if mode == "manual":
+            item = repairable[0]
+            if item.get("repair_level") == "guarded" and not self._confirm_guarded(item):
+                return False
+            return self._prompt_and_repair(service_name, [item], ask=True)
+
+        return False
 
     def _prompt_and_repair(self, service_name: str, issues: list[dict], ask: bool = True) -> bool:
+        if not issues:
+            return False
         files_to_repair: dict[str, list[dict]] = {}
         for issue in issues:
             files_to_repair.setdefault(issue["file_path"], []).extend(issue["fixes"])
@@ -309,33 +399,39 @@ class LixetEngine:
                 self.ui.status("ok", f"Repairs applied: {file_path}")
             except (BackupError, RepairError, OSError) as exc:
                 self.ui.status("error", f"Repair failed for {file_path}: {exc}")
+                if backups:
+                    self.ui.status("warn", "Restoring backups after failed repair.")
+                    self._restore_backups(backups)
                 return False
 
         if self._verify(service_name, list(files_to_repair)):
             return True
 
         self.ui.status("warn", "Verification failed. Restoring backups.")
+        self._restore_backups(backups)
+        return False
+
+    def _restore_backups(self, backups: dict[str, str]) -> None:
         for file_path, backup_path in backups.items():
             try:
                 self.backup_manager.restore_backup(backup_path, file_path)
                 self.ui.status("ok", f"Restored: {file_path}")
             except BackupError as exc:
                 self.ui.status("error", f"Restore failed for {file_path}: {exc}")
-        return False
 
-    def _repair_grouped(self, items: list[tuple[str, dict]], ask: bool) -> bool:
+    def _repair_grouped(self, items: list[tuple[str, dict]], mode: str) -> bool:
         groups: dict[str, list[dict]] = defaultdict(list)
         for service_name, item in items:
             groups[service_name].append(item)
-        results = [self._repair_issue_set(service_name, issues, ask=ask) for service_name, issues in groups.items()]
-        return all(results)
+        results = [self._repair_issue_set(service_name, issues, mode=mode) for service_name, issues in groups.items()]
+        return any(results)
 
     def _preview_grouped(self, items: list[tuple[str, dict]]) -> bool:
         groups: dict[str, list[dict]] = defaultdict(list)
         for service_name, item in items:
             groups[service_name].append(item)
         for service_name, issues in groups.items():
-            self._repair_issue_set(service_name, issues, ask=False)
+            self._repair_issue_set(service_name, issues, mode="dry")
         return False
 
     @staticmethod
@@ -351,7 +447,7 @@ class LixetEngine:
         return True
 
     def _verify_ssh(self, paths: list[str]) -> bool:
-        config_path = paths[0]
+        config_path = self.config_path or self.supported_services["ssh"]["default"]
         result = run_command(["sshd", "-t", "-f", config_path])
         if not result:
             self.ui.status("warn", "sshd not found. Skipped external syntax verification.")
@@ -363,7 +459,8 @@ class LixetEngine:
         return False
 
     def _verify_nginx(self, paths: list[str]) -> bool:
-        result = run_command(["nginx", "-t", "-c", paths[0]])
+        config_path = self.config_path or self.supported_services["nginx"]["default"]
+        result = run_command(["nginx", "-t", "-c", config_path])
         if not result:
             self.ui.status("warn", "nginx not found. Skipped external syntax verification.")
             return True
@@ -385,4 +482,28 @@ class LixetEngine:
             self.ui.status("ok", "systemd unit verification passed.")
             return True
         self.ui.status("error", f"systemd unit verification failed: {result['evidence']}")
+        return False
+
+    def _verify_sudoers(self, paths: list[str]) -> bool:
+        config_path = self.config_path or self.supported_services["sudoers"]["default"]
+        result = run_command(["visudo", "-cf", config_path])
+        if not result:
+            self.ui.status("warn", "visudo not found. Skipped sudoers syntax verification.")
+            return True
+        if result["returncode"] == 0:
+            self.ui.status("ok", "sudoers verification passed.")
+            return True
+        self.ui.status("error", f"sudoers verification failed: {result['evidence']}")
+        return False
+
+    def _verify_fstab(self, paths: list[str]) -> bool:
+        config_path = paths[0] if paths else "/etc/fstab"
+        result = run_command(["findmnt", "--verify", "--tab-file", config_path])
+        if not result:
+            self.ui.status("warn", "findmnt not found. Skipped fstab verification.")
+            return True
+        if result["returncode"] == 0:
+            self.ui.status("ok", "fstab verification passed.")
+            return True
+        self.ui.status("error", f"fstab verification failed: {result['evidence']}")
         return False

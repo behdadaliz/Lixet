@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ipaddress
+from pathlib import Path
 
 from validators.helpers import first_match, issue
 
@@ -13,6 +14,12 @@ class SSHValidator:
 
     VALID_PERMIT_ROOT_LOGIN = {"yes", "prohibit-password", "forced-commands-only", "no"}
     YES_NO = {"PasswordAuthentication", "PubkeyAuthentication", "X11Forwarding", "UsePAM"}
+    YES_NO_DEFAULTS = {
+        "PasswordAuthentication": "no",
+        "PubkeyAuthentication": "yes",
+        "X11Forwarding": "no",
+        "UsePAM": "yes",
+    }
     DUPLICATE_IMPORTANT = {"PermitRootLogin", "PasswordAuthentication", "PubkeyAuthentication"}
 
     def __init__(self, file_path: str = "/etc/ssh/sshd_config") -> None:
@@ -49,8 +56,11 @@ class SSHValidator:
         fixes: list[dict] | None = None,
         line_number: int | None = None,
         evidence: str | None = None,
+        repair_level: str | None = None,
+        safety_note: str | None = None,
+        risk_note: str | None = None,
     ) -> dict:
-        return issue(code, severity, description, self.file_path, fixes, line_number, "ssh", evidence)
+        return issue(code, severity, description, self.file_path, fixes, line_number, "ssh", evidence, safety_note, None, repair_level, risk_note)
 
     def _check_config_test(self, data: dict, issues: list[dict]) -> None:
         test = data.get("config_test")
@@ -63,19 +73,33 @@ class SSHValidator:
         if match:
             file_path = match.group("file")
             line_number = int(match.group("line"))
+        fixes: list[dict] = []
+        repair_level = "unsafe"
+        risk_note = None
+        bad = first_match(r"Bad configuration option:\s*(?P<option>\S+)", evidence)
+        if bad and line_number and self._line_has_directive(file_path, line_number, bad.group("option")):
+            fixes = [{
+                "action": "comment_out_with_reason",
+                "line_number": line_number,
+                "reason": "Lixet disabled invalid directive",
+            }]
+            repair_level = "guarded"
+            risk_note = "This comments out a directive rejected by sshd. Review the line before applying."
         item = issue(
             "SSH_CONFIG_TEST_FAILED",
             "high",
             "SSH configuration test failed.",
             file_path,
-            [],
+            fixes,
             line_number,
             "ssh",
             evidence,
-            "No safe automatic repair available.",
+            "No safe automatic repair available." if not fixes else "A guarded repair can comment out the exact invalid directive.",
             test.get("command"),
+            repair_level,
+            risk_note,
+            "A backup is restored automatically if sshd verification fails.",
         )
-        bad = first_match(r"Bad configuration option:\s*(?P<option>\S+)", evidence)
         if bad:
             item["bad_option"] = bad.group("option")
         issues.append(item)
@@ -88,15 +112,17 @@ class SSHValidator:
     def _check_missing_port(self, parsed_data: list[dict], issues: list[dict]) -> None:
         if self._active(parsed_data, "Port", global_only=True):
             return
-        first_match = next((item for item in parsed_data if item["is_active"] and str(item["directive"]).lower() == "match"), None)
+        first_match_block = next((item for item in parsed_data if item["is_active"] and str(item["directive"]).lower() == "match"), None)
         fix = {"action": "append", "content": "Port 22"}
-        if first_match:
-            fix = {"action": "insert_before", "line_number": first_match["line_number"], "content": "Port 22"}
+        if first_match_block:
+            fix = {"action": "insert_before", "line_number": first_match_block["line_number"], "content": "Port 22"}
         issues.append(self._issue(
             "SSH_MISSING_PORT",
-            "low",
+            "info",
             "No explicit Port directive found; SSH will use the default port 22.",
             [fix],
+            repair_level="safe",
+            safety_note="This only makes the existing default SSH port explicit.",
         ))
 
     def _check_duplicate_ports(self, parsed_data: list[dict], issues: list[dict]) -> None:
@@ -106,8 +132,10 @@ class SSHValidator:
                 "SSH_DUPLICATE_PORT",
                 "medium",
                 f"Duplicate Port directive found with value '{duplicate['value']}'. OpenSSH normally uses the first active value.",
-                [{"action": "delete", "line_number": duplicate["line_number"]}],
+                [{"action": "comment_out_with_reason", "line_number": duplicate["line_number"], "reason": "Lixet disabled duplicate"}],
                 duplicate["line_number"],
+                repair_level="guarded",
+                risk_note="Changing active Port directives can affect SSH access. Confirm another access path first.",
             ))
 
     def _check_duplicate_important(self, parsed_data: list[dict], issues: list[dict]) -> None:
@@ -135,6 +163,8 @@ class SSHValidator:
                     f"Invalid Port value '{port['value']}'. Must be an integer between 1 and 65535.",
                     [{"action": "replace", "line_number": port["line_number"], "content": "Port 22"}],
                     port["line_number"],
+                    repair_level="guarded",
+                    risk_note="Changing the SSH port can affect remote access. Make sure port 22 is reachable before applying.",
                 ))
 
     def _check_permit_root_login(self, parsed_data: list[dict], issues: list[dict]) -> None:
@@ -147,6 +177,8 @@ class SSHValidator:
                     f"Invalid PermitRootLogin value '{item['value']}'.",
                     [{"action": "replace", "line_number": item["line_number"], "content": "PermitRootLogin prohibit-password"}],
                     item["line_number"],
+                    repair_level="guarded",
+                    risk_note="This changes root login behavior. Make sure you have another working login method.",
                 ))
 
     def _check_risky_values(self, parsed_data: list[dict], issues: list[dict]) -> None:
@@ -156,8 +188,10 @@ class SSHValidator:
                     "SSH_ROOT_LOGIN_ENABLED",
                     "medium",
                     "PermitRootLogin is enabled. This can increase SSH exposure on public servers.",
-                    [],
+                    [{"action": "replace", "line_number": item["line_number"], "content": "PermitRootLogin prohibit-password"}],
                     item["line_number"],
+                    repair_level="guarded",
+                    risk_note="This may change how root logs in. Make sure you have another working login method.",
                 ))
         for item in self._active(parsed_data, "PasswordAuthentication", global_only=True)[:1]:
             if str(item["value"]).lower() == "yes":
@@ -165,8 +199,10 @@ class SSHValidator:
                     "SSH_PASSWORD_AUTH_ENABLED",
                     "medium",
                     "PasswordAuthentication is enabled. Review this if the server is reachable from the internet.",
-                    [],
+                    [{"action": "replace", "line_number": item["line_number"], "content": "PasswordAuthentication no"}],
                     item["line_number"],
+                    repair_level="guarded",
+                    risk_note="This may block password login. Make sure SSH key login works first.",
                 ))
 
     def _check_yes_no(self, parsed_data: list[dict], issues: list[dict]) -> None:
@@ -174,19 +210,31 @@ class SSHValidator:
             for item in self._active(parsed_data, name):
                 value = str(item["value"]).lower()
                 if value not in {"yes", "no"}:
+                    default = self.YES_NO_DEFAULTS[name]
+                    severity = "high" if name == "PasswordAuthentication" else "medium"
                     issues.append(self._issue(
                         f"SSH_INVALID_{name.upper()}",
-                        "medium",
+                        severity,
                         f"Invalid {name} value '{item['value']}'. Expected yes or no.",
-                        [{"action": "replace", "line_number": item["line_number"], "content": f"{name} no"}],
+                        [{"action": "replace", "line_number": item["line_number"], "content": f"{name} {default}"}],
                         item["line_number"],
+                        repair_level="guarded",
+                        risk_note="Changing SSH authentication directives can affect access. Review before applying.",
                     ))
 
     def _check_listen_address(self, parsed_data: list[dict], issues: list[dict]) -> None:
         for item in self._active(parsed_data, "ListenAddress", global_only=True):
             value = str(item["value"]).split()[0]
             if not value:
-                issues.append(self._issue("SSH_EMPTY_LISTEN_ADDRESS", "medium", "ListenAddress has no value.", [], item["line_number"]))
+                issues.append(self._issue(
+                    "SSH_EMPTY_LISTEN_ADDRESS",
+                    "medium",
+                    "ListenAddress has no value.",
+                    [{"action": "comment_out_with_reason", "line_number": item["line_number"], "reason": "Lixet disabled empty ListenAddress"}],
+                    item["line_number"],
+                    repair_level="safe",
+                    safety_note="The empty ListenAddress line is not useful and can be commented out.",
+                ))
                 continue
             try:
                 ipaddress.ip_address(value)
@@ -195,6 +243,21 @@ class SSHValidator:
                     "SSH_INVALID_LISTEN_ADDRESS",
                     "medium",
                     f"ListenAddress '{value}' is not a valid IP address.",
-                    [],
+                    [{"action": "comment_out_with_reason", "line_number": item["line_number"], "reason": "Lixet disabled invalid ListenAddress"}],
                     item["line_number"],
+                    repair_level="guarded",
+                    risk_note="Changing ListenAddress can affect which addresses SSH listens on.",
                 ))
+
+    @staticmethod
+    def _line_has_directive(file_path: str, line_number: int, directive: str) -> bool:
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            return False
+        try:
+            lines = path.read_text(encoding="utf-8-sig").splitlines()
+        except OSError:
+            return False
+        if line_number < 1 or line_number > len(lines):
+            return False
+        return lines[line_number - 1].strip().split(None, 1)[:1] == [directive]

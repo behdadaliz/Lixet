@@ -49,7 +49,18 @@ class RepairManager:
         fixes = RepairManager._normalize_fixes(fixes)
         result = list(lines)
         messages: list[str] = []
-        line_fixes = [fix for fix in fixes if fix.get("action") in {"replace", "delete", "insert_before"}]
+        line_fixes = [
+            fix for fix in fixes
+            if fix.get("action") in {
+                "replace",
+                "replace_preserve_comment",
+                "delete",
+                "comment_out",
+                "comment_out_with_reason",
+                "insert_before",
+                "insert_after",
+            }
+        ]
         line_fixes.sort(key=lambda fix: int(fix["line_number"]), reverse=True)
 
         for fix in line_fixes:
@@ -63,15 +74,31 @@ class RepairManager:
                 messages.append(f"replace line {line_number}: {result[index].rstrip()} -> {content.rstrip()}")
                 if not preview:
                     result[index] = content
+            elif action == "replace_preserve_comment":
+                content = RepairManager._replace_preserve_comment(result[index], str(fix["content"]))
+                messages.append(f"replace line {line_number}: {result[index].rstrip()} -> {content.rstrip()}")
+                if not preview:
+                    result[index] = content
             elif action == "delete":
                 messages.append(f"delete line {line_number}: {result[index].rstrip()}")
                 if not preview:
                     del result[index]
+            elif action in {"comment_out", "comment_out_with_reason"}:
+                reason = str(fix.get("reason") or "Lixet disabled")
+                content = RepairManager._comment_line(result[index], reason)
+                messages.append(f"comment line {line_number}: {result[index].rstrip()} -> {content.rstrip()}")
+                if not preview:
+                    result[index] = content
             elif action == "insert_before":
                 content = str(fix["content"]).rstrip("\n") + "\n"
                 messages.append(f"insert before line {line_number}: {content.rstrip()}")
                 if not preview:
                     result.insert(index, content)
+            elif action == "insert_after":
+                content = str(fix["content"]).rstrip("\n") + "\n"
+                messages.append(f"insert after line {line_number}: {content.rstrip()}")
+                if not preview:
+                    result.insert(index + 1, content)
 
         for fix in [fix for fix in fixes if fix.get("action") == "append"]:
             content = str(fix["content"]).rstrip("\n") + "\n"
@@ -90,26 +117,62 @@ class RepairManager:
 
         for fix in fixes:
             action = fix.get("action")
-            if action not in {"append", "replace", "delete", "insert_before"}:
+            if action not in {
+                "append",
+                "replace",
+                "replace_preserve_comment",
+                "delete",
+                "comment_out",
+                "comment_out_with_reason",
+                "insert_before",
+                "insert_after",
+            }:
                 raise RepairError(f"Unsupported repair action: {action}")
 
             item = {"action": action}
-            if action in {"replace", "delete", "insert_before"}:
+            if action in {
+                "replace",
+                "replace_preserve_comment",
+                "delete",
+                "comment_out",
+                "comment_out_with_reason",
+                "insert_before",
+                "insert_after",
+            }:
                 try:
                     line_number = int(fix["line_number"])
                 except (KeyError, TypeError, ValueError) as exc:
                     raise RepairError(f"Invalid line number for {action} repair") from exc
-                if action in {"replace", "delete"} and line_number in seen:
+                if action in {"replace", "replace_preserve_comment", "delete", "comment_out", "comment_out_with_reason"} and line_number in seen:
                     raise RepairError(f"Conflicting repairs for line {line_number}: {seen[line_number]} and {action}")
-                if action in {"replace", "delete"}:
+                if action in {"replace", "replace_preserve_comment", "delete", "comment_out", "comment_out_with_reason"}:
                     seen[line_number] = action
                 item["line_number"] = line_number
 
-            if action in {"append", "replace", "insert_before"}:
+            if action in {"append", "replace", "replace_preserve_comment", "insert_before", "insert_after"}:
                 if "content" not in fix:
                     raise RepairError(f"Missing content for {action} repair")
                 item["content"] = str(fix["content"])
 
+            if action == "comment_out_with_reason":
+                item["reason"] = str(fix.get("reason") or "Lixet disabled")
+
             clean.append(item)
 
         return clean
+
+    @staticmethod
+    def _comment_line(line: str, reason: str) -> str:
+        ending = "\n" if line.endswith("\n") else ""
+        body = line[:-1] if ending else line
+        return f"# {reason}: {body.lstrip()}".rstrip() + ending
+
+    @staticmethod
+    def _replace_preserve_comment(line: str, content: str) -> str:
+        ending = "\n" if line.endswith("\n") else ""
+        body = line[:-1] if ending else line
+        new_body = content.rstrip("\n")
+        if "#" not in body:
+            return new_body + ending
+        _, comment = body.split("#", 1)
+        return f"{new_body} # {comment.strip()}".rstrip() + ending

@@ -14,7 +14,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from core.version import read_installed_version, select_latest_release
+from core.version import normalize_version, read_installed_version, select_latest_release
 from utils.ui import UI
 
 
@@ -30,6 +30,18 @@ class LixetUpdater:
     )
     SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "env", "developer", "docker", "tests"}
     SKIP_NAMES = {".env"}
+    REQUIRED_PATHS = (
+        "VERSION",
+        "main.py",
+        "install.py",
+        "cli",
+        "core",
+        "services",
+        "validators",
+        "repair",
+        "backup",
+        "utils",
+    )
 
     def __init__(self, no_color: bool = False) -> None:
         self.ui = UI(no_color=no_color)
@@ -52,10 +64,9 @@ class LixetUpdater:
         try:
             with tempfile.TemporaryDirectory(prefix="lixet-update-") as tmp:
                 tmp_path = Path(tmp)
-                archive, channel, version_name = self._download(tmp_path)
+                archive, version_name = self._download(tmp_path)
                 src = self._extract(archive, tmp_path)
-                if channel:
-                    self._line("Update channel", channel)
+                self._validate_source(src)
                 self.ui.status("info", "Installing updated version...")
                 self._replace_install(src, version_name)
         except Exception as exc:
@@ -68,11 +79,11 @@ class LixetUpdater:
         self._line("Command", "lixet")
         return True
 
-    def _download(self, tmp_path: Path) -> tuple[Path, str | None, str | None]:
+    def _download(self, tmp_path: Path) -> tuple[Path, str | None]:
         self.ui.status("info", "Checking latest available version...")
         release = self._download_latest_release(tmp_path)
         if release:
-            return release[0], None, release[1]
+            return release[0], release[1]
 
         last_error: Exception | None = None
         for branch, url in self.SOURCES:
@@ -83,7 +94,7 @@ class LixetUpdater:
                 with urllib.request.urlopen(request, timeout=30) as response:
                     archive.write_bytes(response.read())
                 self.ui.status("ok", "Download complete.")
-                return archive, f"{branch} branch", None
+                return archive, None
             except urllib.error.HTTPError as exc:
                 last_error = exc
                 if exc.code == 404:
@@ -108,7 +119,7 @@ class LixetUpdater:
         if not item:
             return None
         url = item.get("zipball_url")
-        name = str(item.get("display") or item.get("tag") or item.get("version") or "").strip()
+        name = str(item.get("version") or "").strip()
         if not url:
             return None
 
@@ -129,6 +140,15 @@ class LixetUpdater:
             raise RuntimeError("Downloaded archive does not contain a Lixet entry point.")
         return roots[0]
 
+    def _validate_source(self, src: Path) -> None:
+        missing = [name for name in self.REQUIRED_PATHS if not (src / name).exists()]
+        if missing:
+            raise RuntimeError(f"Downloaded archive is missing required project files: {', '.join(missing)}")
+
+        version_text = (src / "VERSION").read_text(encoding="utf-8").strip()
+        if normalize_version(version_text) != version_text:
+            raise RuntimeError("Downloaded archive has an invalid VERSION value.")
+
     def _replace_install(self, src: Path, version: str | None = None) -> None:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup = self.INSTALL_DIR.with_name(f".lixet-update-backup-{stamp}")
@@ -142,16 +162,26 @@ class LixetUpdater:
                 (self.INSTALL_DIR / "VERSION").write_text(version + "\n", encoding="utf-8")
             mode = stat.S_IMODE(main_script.stat().st_mode)
             main_script.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-            if self.BIN_PATH.exists() or self.BIN_PATH.is_symlink():
-                self.BIN_PATH.unlink()
-            self.BIN_PATH.symlink_to(main_script)
+            self._link_command(main_script)
         except Exception:
             if self.INSTALL_DIR.exists():
                 shutil.rmtree(self.INSTALL_DIR)
             shutil.move(backup, self.INSTALL_DIR)
+            restored_main = self.INSTALL_DIR / "main.py"
+            if restored_main.exists():
+                try:
+                    self._link_command(restored_main)
+                except OSError:
+                    pass
             raise
         else:
             shutil.rmtree(backup, ignore_errors=True)
+
+    def _link_command(self, main_script: Path) -> None:
+        self.BIN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if self.BIN_PATH.exists() or self.BIN_PATH.is_symlink():
+            self.BIN_PATH.unlink()
+        self.BIN_PATH.symlink_to(main_script)
 
     def _ignore(self, _src: str, names: list[str]) -> set[str]:
         return {name for name in names if self._skip(name)}

@@ -27,7 +27,7 @@ lixet ...
 
 ## Service or target
 
-- Service checked: ssh / nginx / ufw / dns / networking / systemd
+- Service checked: ssh / nginx / ufw / dns / networking / systemd / sudoers / fstab / sysctl
 - Config path or target file, if relevant:
 
 ## Expected behavior

@@ -7,16 +7,24 @@ GREEN='\033[92m'
 CYAN='\033[96m'
 RESET='\033[0m'
 
+color() {
+    if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+        printf '%b' "$1$2$RESET"
+    else
+        printf '%s' "$2"
+    fi
+}
+
 ok() {
-    printf '%b\n' "${GREEN}[OK]${RESET} $1"
+    printf '%s %s\n' "$(color "$GREEN" "[OK]")" "$1"
 }
 
 info() {
-    printf '%b\n' "${CYAN}[INFO]${RESET} $1"
+    printf '%s %s\n' "$(color "$CYAN" "[INFO]")" "$1"
 }
 
 err() {
-    printf '%b\n' "${RED}[ERR]${RESET} $1" >&2
+    printf '%s %s\n' "$(color "$RED" "[ERR]")" "$1" >&2
 }
 
 BIN_PATH="/usr/local/bin/lixet"

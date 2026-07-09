@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from textwrap import wrap
 
 
@@ -40,6 +41,10 @@ class UI:
             "ok": self.GREEN,
             "warn": self.YELLOW,
             "error": self.RED,
+            "critical": self.BOLD + self.RED,
+            "high": self.RED,
+            "medium": self.YELLOW,
+            "low": self.CYAN,
             "info": self.CYAN,
             "skip": self.CYAN,
         }
@@ -47,6 +52,10 @@ class UI:
             "ok": "OK",
             "warn": "WARN",
             "error": "ERR",
+            "critical": "CRITICAL",
+            "high": "HIGH",
+            "medium": "MEDIUM",
+            "low": "LOW",
             "info": "INFO",
             "skip": "SKIP",
         }
@@ -64,16 +73,21 @@ class UI:
         self.kv("Problem", item["description"])
         self.kv("Location", self.location(item))
         if item.get("source_command"):
-            self.kv("Source", str(item["source_command"]))
+            self.kv("Command", str(item["source_command"]))
         if item.get("evidence"):
             self.evidence(str(item["evidence"]))
         if item.get("fixes"):
+            self.kv("Repair level", str(item.get("repair_level", "safe")))
             self.kv("Repair", self.repair_text(item))
         else:
             self.kv("Repair", item.get("safety_note") or "No safe automatic repair available.")
+        if item.get("risk_note"):
+            self.kv("Risk", str(item["risk_note"]))
+        if item.get("rollback_note"):
+            self.kv("Rollback", str(item["rollback_note"]))
 
     def kv(self, key: str, value: str) -> None:
-        print(f"  {self.c(key + ':', self.BOLD + self.CYAN)} {value}")
+        print(f"  {self.c((key + ':').ljust(12), self.BOLD + self.CYAN)} {value}")
 
     def bullet(self, text: str) -> None:
         lines = wrap(text, width=88, subsequent_indent="      ") or [text]
@@ -125,4 +139,4 @@ class UI:
     def _supports_color() -> bool:
         if os.environ.get("NO_COLOR"):
             return False
-        return True
+        return sys.stdout.isatty()

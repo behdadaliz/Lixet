@@ -22,8 +22,18 @@ class SystemdValidator:
             self._check_unit(unit, issues)
         return issues
 
-    def _issue(self, code: str, severity: str, desc: str, path: str, fixes: list[dict] | None = None, line: int | None = None) -> dict:
-        return issue(code, severity, desc, path, fixes, line, "systemd")
+    def _issue(
+        self,
+        code: str,
+        severity: str,
+        desc: str,
+        path: str,
+        fixes: list[dict] | None = None,
+        line: int | None = None,
+        repair_level: str | None = None,
+        risk_note: str | None = None,
+    ) -> dict:
+        return issue(code, severity, desc, path, fixes, line, "systemd", None, None, None, repair_level, risk_note)
 
     def _check_system(self, data: dict, issues: list[dict]) -> None:
         failed = data.get("failed_units")
@@ -114,6 +124,7 @@ class SystemdValidator:
                     path,
                     [{"action": "replace", "line_number": row["line_number"], "content": "Restart=no"}],
                     row["line_number"],
+                    repair_level="safe",
                 ))
 
         for row in [row for row in rows if row["key"] == "Type"]:
@@ -126,6 +137,8 @@ class SystemdValidator:
                     path,
                     [{"action": "replace", "line_number": row["line_number"], "content": "Type=simple"}],
                     row["line_number"],
+                    repair_level="guarded",
+                    risk_note="Changing systemd Type can affect how the service process is tracked.",
                 ))
 
     @staticmethod

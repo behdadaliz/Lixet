@@ -12,7 +12,7 @@ from pathlib import Path
 from utils.ui import UI
 
 RELEASES_URL = "https://api.github.com/repos/behdadaliz/Lixet/releases?per_page=50"
-TAGS_URL = "https://api.github.com/repos/behdadaliz/Lixet/tags"
+TAGS_URL = "https://api.github.com/repos/behdadaliz/Lixet/tags?per_page=50"
 
 
 class VersionReporter:
@@ -24,22 +24,20 @@ class VersionReporter:
     def run(self) -> bool:
         installed = read_installed_version()
         latest = fetch_github_version()
-        latest_name = latest["display"] if latest else "not available"
-        url = latest.get("url") if latest else None
+        latest_version = latest["version"] if latest else "not available"
+        status = _status(installed, latest_version, latest is not None)
 
         self.ui.banner("Lixet Version")
-        self._line("Current version", installed)
-        self._line("Latest version", latest_name)
-        self._line("Url", url or "not available")
-        if latest:
-            self.ui.status("info", "If your installed copy is older, update it.")
-        else:
-            self.ui.status("warn", "Could not check the latest GitHub release.")
-        print(f"  {self.ui.c('Update:', self.ui.BOLD + self.ui.CYAN)} {self.ui.c('sudo lixet --update', self.ui.BOLD)}")
+        self._line("Installed version", installed)
+        self._line("Latest release", latest_version)
+        self._line("Status", status)
+        print()
+        print(self.ui.c("Update command:", self.ui.BOLD + self.ui.CYAN))
+        print(f"  {self.ui.c('sudo lixet --update', self.ui.BOLD)}")
         return True
 
     def _line(self, key: str, value: str) -> None:
-        print(f"{self.ui.c(key, self.ui.BOLD + self.ui.CYAN)}: {value}")
+        print(f"{self.ui.c(key.ljust(18), self.ui.BOLD + self.ui.CYAN)}: {value}")
 
 
 def read_installed_version(root: Path | None = None) -> str:
@@ -49,7 +47,7 @@ def read_installed_version(root: Path | None = None) -> str:
         version = version_file.read_text(encoding="utf-8").strip()
     except OSError:
         return "unknown"
-    return version or "unknown"
+    return normalize_version(version) or version or "unknown"
 
 
 def fetch_github_version(timeout: int = 6) -> dict | None:
@@ -100,7 +98,7 @@ def select_latest_tag(items: object) -> dict | None:
             continue
         candidates.append((key, tag, {
             "version": version,
-            "display": tag,
+            "display": version,
             "url": f"https://github.com/behdadaliz/Lixet/tree/{tag}",
             "tag": tag,
             "zipball_url": None,
@@ -115,12 +113,12 @@ def select_latest_tag(items: object) -> dict | None:
 def _release_info(item: dict) -> dict | None:
     raw_tag = str(item.get("tag_name") or "").strip()
     raw_name = str(item.get("name") or "").strip()
-    version = normalize_version(raw_name) or normalize_version(raw_tag)
+    version = normalize_version(raw_tag) or normalize_version(raw_name)
     if not version:
         return None
     return {
         "version": version,
-        "display": raw_name or raw_tag or version,
+        "display": version,
         "url": item.get("html_url"),
         "tag": raw_tag,
         "zipball_url": item.get("zipball_url"),
@@ -165,3 +163,19 @@ def version_key(text: str) -> tuple[int, int, int, int, int] | None:
     nums.extend([0] * (4 - len(nums)))
     stage = {"alpha": 0, "beta": 1, "rc": 2, None: 3}[match.group(2)]
     return nums[0], nums[1], nums[2], nums[3], stage
+
+
+def _status(installed: str, latest: str, checked: bool) -> str:
+    if not checked:
+        return "unable to check"
+    installed_key = version_key(installed)
+    latest_key = version_key(latest)
+    if installed_key is None:
+        return "installed version unknown"
+    if latest_key is None:
+        return "unable to check"
+    if installed_key == latest_key:
+        return "up to date"
+    if installed_key < latest_key:
+        return "update available"
+    return "newer than latest release"

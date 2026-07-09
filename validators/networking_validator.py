@@ -15,11 +15,21 @@ class NetworkingValidator:
         issues: list[dict] = []
         self._check_ipv4_localhost(rows, issues)
         self._check_ipv6_localhost(rows, issues)
+        self._check_duplicate_localhost(rows, issues)
         self._check_runtime(data, issues)
         return issues
 
-    def _issue(self, code: str, severity: str, desc: str, fixes: list[dict] | None = None, line: int | None = None) -> dict:
-        return issue(code, severity, desc, self.file_path, fixes, line, "networking")
+    def _issue(
+        self,
+        code: str,
+        severity: str,
+        desc: str,
+        fixes: list[dict] | None = None,
+        line: int | None = None,
+        repair_level: str | None = None,
+        risk_note: str | None = None,
+    ) -> dict:
+        return issue(code, severity, desc, self.file_path, fixes, line, "networking", None, None, None, repair_level, risk_note)
 
     def _active_hosts(self, rows: list[dict]) -> list[dict]:
         out = []
@@ -34,7 +44,7 @@ class NetworkingValidator:
     def _check_ipv4_localhost(self, rows: list[dict], issues: list[dict]) -> None:
         items = [row for row in self._active_hosts(rows) if row["addr"] == "127.0.0.1"]
         if not items:
-            issues.append(self._issue("NET_MISSING_IPV4_LOCALHOST", "high", "Missing 127.0.0.1 localhost entry.", [{"action": "append", "content": "127.0.0.1 localhost"}]))
+            issues.append(self._issue("NET_MISSING_IPV4_LOCALHOST", "high", "Missing 127.0.0.1 localhost entry.", [{"action": "append", "content": "127.0.0.1 localhost"}], repair_level="safe"))
             return
         first = items[0]
         if "localhost" not in first["names"]:
@@ -45,12 +55,33 @@ class NetworkingValidator:
                 "127.0.0.1 entry does not contain localhost.",
                 [{"action": "replace", "line_number": first["line_number"], "content": f"127.0.0.1 {names}"}],
                 first["line_number"],
+                repair_level="safe",
             ))
 
     def _check_ipv6_localhost(self, rows: list[dict], issues: list[dict]) -> None:
         items = [row for row in self._active_hosts(rows) if row["addr"] == "::1"]
         if not items:
-            issues.append(self._issue("NET_MISSING_IPV6_LOCALHOST", "medium", "Missing ::1 localhost entry.", [{"action": "append", "content": "::1 localhost ip6-localhost ip6-loopback"}]))
+            issues.append(self._issue("NET_MISSING_IPV6_LOCALHOST", "medium", "Missing ::1 localhost entry.", [{"action": "append", "content": "::1 localhost ip6-localhost ip6-loopback"}], repair_level="safe"))
+
+    def _check_duplicate_localhost(self, rows: list[dict], issues: list[dict]) -> None:
+        seen: set[tuple[str, str]] = set()
+        for row in self._active_hosts(rows):
+            names = set(row["names"])
+            if "localhost" not in names:
+                continue
+            key = (row["addr"], "localhost")
+            if key not in seen:
+                seen.add(key)
+                continue
+            issues.append(self._issue(
+                "NET_DUPLICATE_LOCALHOST",
+                "low",
+                f"Duplicate localhost entry for {row['addr']}.",
+                [{"action": "comment_out_with_reason", "line_number": row["line_number"], "reason": "Lixet disabled duplicate localhost"}],
+                row["line_number"],
+                repair_level="guarded",
+                risk_note="Commenting hosts entries can affect local name resolution. Review before applying.",
+            ))
 
     def _check_runtime(self, data: dict, issues: list[dict]) -> None:
         route = data.get("ip_route")
@@ -66,16 +97,23 @@ class NetworkingValidator:
             issues.append(issue("NET_MISSING_DEFAULT_ROUTE", "high", "No default route was detected.", self.file_path, [], None, "networking", evidence or "ip route returned no default route.", "No automatic repair is applied.", route.get("command")))
         if addr and addr["returncode"] == 0:
             text = addr.get("evidence", "")
-            if not self._has_non_loopback_ipv4(text):
-                issues.append(issue("NET_NO_NON_LOOPBACK_IPV4", "medium", "No non-loopback IPv4 address was detected.", self.file_path, [], None, "networking", text, "No automatic repair is applied.", addr.get("command")))
-        if link and link["returncode"] == 0 and not self._has_non_loopback_up(link.get("evidence", "")):
-            issues.append(issue("NET_NO_NON_LOOPBACK_LINK_UP", "medium", "No non-loopback interface appears to be up.", self.file_path, [], None, "networking", link.get("evidence", ""), "No automatic repair is applied.", link.get("command")))
+            if not self._has_non_loopback_ip(text):
+                issues.append(issue("NET_NO_NON_LOOPBACK_IP", "medium", "No non-loopback IP address was detected.", self.file_path, [], None, "networking", text, "No automatic repair is applied.", addr.get("command")))
+        elif addr and addr["returncode"] != 0:
+            issues.append(issue("NET_ADDR_CHECK_FAILED", "low", "Could not inspect interface addresses.", self.file_path, [], None, "networking", addr.get("evidence", ""), "No automatic repair is applied.", addr.get("command")))
+        if link and link["returncode"] == 0:
+            if not self._has_non_loopback_up(link.get("evidence", "")):
+                issues.append(issue("NET_NO_NON_LOOPBACK_LINK_UP", "medium", "No non-loopback interface appears to be up.", self.file_path, [], None, "networking", link.get("evidence", ""), "No automatic repair is applied.", link.get("command")))
+        elif link and link["returncode"] != 0:
+            issues.append(issue("NET_LINK_CHECK_FAILED", "low", "Could not inspect network interfaces.", self.file_path, [], None, "networking", link.get("evidence", ""), "No automatic repair is applied.", link.get("command")))
 
     @staticmethod
-    def _has_non_loopback_ipv4(text: str) -> bool:
+    def _has_non_loopback_ip(text: str) -> bool:
         for line in text.splitlines():
             parts = line.strip().split()
             if len(parts) >= 2 and parts[0] == "inet" and not parts[1].startswith("127."):
+                return True
+            if len(parts) >= 2 and parts[0] == "inet6" and not parts[1].startswith("::1"):
                 return True
         return False
 

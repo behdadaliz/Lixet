@@ -32,7 +32,7 @@ What other tools, commands, scripts, or manual steps have you tried?
 
 ## Safety considerations
 
-If this feature would read or modify configuration files, describe the risks. Should it be diagnostic only, or should it offer a repair after confirmation?
+If this feature would read or modify configuration files, describe the risks. Should it be diagnostic only, `safe`, `guarded`, or `unsafe`?
 
 ## Additional context
 

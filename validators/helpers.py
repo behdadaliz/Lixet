@@ -41,8 +41,17 @@ def issue(
     evidence: str | None = None,
     safety_note: str | None = None,
     source_command: str | None = None,
+    repair_level: str | None = None,
+    risk_note: str | None = None,
+    rollback_note: str | None = None,
 ) -> dict:
-    repairable = bool(fixes)
+    level = repair_level or ("safe" if fixes else "unsafe")
+    if level not in {"safe", "guarded", "unsafe"}:
+        level = "unsafe"
+    clean_fixes = fixes or []
+    if level == "unsafe":
+        clean_fixes = []
+    repairable = bool(clean_fixes) and level in {"safe", "guarded"}
     return {
         "id": code,
         "code": code,
@@ -53,9 +62,12 @@ def issue(
         "line_number": line_number,
         "evidence": evidence,
         "repairable": repairable,
+        "repair_level": level,
         "safety_note": safety_note,
+        "risk_note": risk_note,
+        "rollback_note": rollback_note,
         "source_command": source_command,
-        "fixes": fixes or [],
+        "fixes": clean_fixes,
     }
 
 

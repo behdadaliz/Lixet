@@ -68,21 +68,21 @@ def parse_and_execute(args: list[str]) -> int:
             Available commands:
               lixet                          Show this help page
               lixet --help                   Show this help page
-              lixet --version                Show installed and latest Lixet version
+              lixet --version                Show installed Lixet version
               sudo lixet --update            Update the installed Lixet version
-              lixet scan <service>           Scan one service and offer safe repairs
-              lixet scan <service> --dry-run Preview repairs without changing files
-              lixet scan <service> -y        Apply all supported repairs without prompting
+              lixet scan <service>           Scan one service
+              lixet scan <service> --dry-run Preview safe repairs without changing files
+              lixet scan <service> -y        Apply all supported safe repairs
               lixet doctor                   Scan all supported services
               lixet doctor --dry-run         Preview all supported repairs
               lixet --no-color ...           Disable colored output
 
             Supported services:
-              ssh, nginx, ufw, dns, networking, systemd
+              ssh, nginx, ufw, dns, networking, systemd, sudoers, fstab, sysctl
         """),
     )
     parser.add_argument("--update", action="store_true", help="Update the installed Lixet version")
-    parser.add_argument("--version", action="store_true", help="Show installed and latest Lixet version")
+    parser.add_argument("--version", action="store_true", help="Show installed Lixet version")
     subparsers = parser.add_subparsers(dest="command", parser_class=partial(LixetArgumentParser, no_color=no_color))
 
     scan_parser = subparsers.add_parser("scan", parents=[common], help="Analyze a specific service")

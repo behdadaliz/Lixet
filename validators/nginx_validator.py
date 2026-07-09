@@ -30,8 +30,18 @@ class NginxValidator:
         self._check_events_block(rows, issues)
         return issues
 
-    def _issue(self, code: str, severity: str, desc: str, fixes: list[dict] | None = None, line: int | None = None) -> dict:
-        return issue(code, severity, desc, self.file_path, fixes, line, "nginx")
+    def _issue(
+        self,
+        code: str,
+        severity: str,
+        desc: str,
+        fixes: list[dict] | None = None,
+        line: int | None = None,
+        repair_level: str | None = None,
+        safety_note: str | None = None,
+        risk_note: str | None = None,
+    ) -> dict:
+        return issue(code, severity, desc, self.file_path, fixes, line, "nginx", None, safety_note, None, repair_level, risk_note)
 
     def _check_config_test(self, data: dict, issues: list[dict]) -> None:
         test = data.get("config_test")
@@ -44,19 +54,33 @@ class NginxValidator:
         if match:
             file_path = match.group("file")
             line_number = int(match.group("line"))
+        fixes: list[dict] = []
+        repair_level = "unsafe"
+        risk_note = None
+        directive = first_match(r"unknown directive\s+\"?(?P<directive>[A-Za-z0-9_:-]+)\"?", evidence)
+        if directive and line_number and self._line_has_text(file_path, line_number, directive.group("directive")):
+            fixes = [{
+                "action": "comment_out_with_reason",
+                "line_number": line_number,
+                "reason": "Lixet disabled invalid directive",
+            }]
+            repair_level = "guarded"
+            risk_note = "This comments out a directive rejected by nginx. Review the line before applying."
         item = issue(
             "NGINX_CONFIG_TEST_FAILED",
             "high",
             "Nginx configuration test failed.",
             file_path,
-            [],
+            fixes,
             line_number,
             "nginx",
             evidence,
-            "No safe automatic repair available.",
+            "No safe automatic repair available." if not fixes else "A guarded repair can comment out the exact invalid directive.",
             test.get("command"),
+            repair_level,
+            risk_note,
+            "A backup is restored automatically if nginx verification fails.",
         )
-        directive = first_match(r"unknown directive\s+\"?(?P<directive>[A-Za-z0-9_:-]+)\"?", evidence)
         if directive:
             item["directive"] = directive.group("directive")
         issues.append(item)
@@ -79,11 +103,22 @@ class NginxValidator:
                     stack.append(row["line_number"])
                 elif char == "}":
                     if not stack:
-                        issues.append(self._issue("NGINX_UNMATCHED_CLOSE_BRACE", "high", "Unmatched closing brace.", [], row["line_number"]))
+                        issues.append(self._issue("NGINX_UNMATCHED_CLOSE_BRACE", "high", "Unmatched closing brace.", [], row["line_number"], repair_level="unsafe"))
                     else:
                         stack.pop()
+        if len(stack) == 1:
+            issues.append(self._issue(
+                "NGINX_UNCLOSED_BLOCK",
+                "high",
+                "Nginx block is not closed.",
+                [{"action": "append", "content": "}"}],
+                stack[0],
+                repair_level="guarded",
+                risk_note="This appends one closing brace. Nginx syntax verification must pass after repair.",
+            ))
+            return
         for line in stack:
-            issues.append(self._issue("NGINX_UNCLOSED_BLOCK", "high", "Nginx block is not closed.", [], line))
+            issues.append(self._issue("NGINX_UNCLOSED_BLOCK", "high", "Nginx block is not closed.", [], line, repair_level="unsafe"))
 
     def _check_semicolons(self, rows: list[dict], issues: list[dict]) -> None:
         for row in rows:
@@ -94,7 +129,7 @@ class NginxValidator:
                 continue
             key = txt.split(None, 1)[0]
             if key not in self.SIMPLE:
-                issues.append(self._issue("NGINX_MISSING_SEMICOLON", "medium", f"Directive '{key}' may be missing a semicolon.", [], row["line_number"]))
+                issues.append(self._issue("NGINX_MISSING_SEMICOLON", "medium", f"Directive '{key}' may be missing a semicolon.", [], row["line_number"], repair_level="unsafe"))
                 continue
             issues.append(self._issue(
                 "NGINX_MISSING_SEMICOLON",
@@ -102,6 +137,8 @@ class NginxValidator:
                 f"Directive '{key}' is missing a semicolon.",
                 [{"action": "replace", "line_number": row["line_number"], "content": self._semicolon(row["raw_line"])}],
                 row["line_number"],
+                repair_level="safe",
+                safety_note="This adds a missing semicolon to a known simple directive.",
             ))
 
     def _check_worker_processes(self, rows: list[dict], issues: list[dict]) -> None:
@@ -125,6 +162,7 @@ class NginxValidator:
                     f"Invalid worker_processes value '{value}'.",
                     [{"action": "replace", "line_number": row["line_number"], "content": "worker_processes auto;"}],
                     row["line_number"],
+                    repair_level="safe",
                 ))
 
     def _check_events_block(self, rows: list[dict], issues: list[dict]) -> None:
@@ -137,6 +175,8 @@ class NginxValidator:
             "high",
             "Missing events block.",
             [{"action": "append", "content": "events {\n    worker_connections 1024;\n}"}],
+            repair_level="guarded",
+            risk_note="This changes the main nginx.conf structure and must pass nginx syntax verification.",
         ))
 
     @staticmethod
@@ -145,4 +185,17 @@ class NginxValidator:
         if "#" not in body:
             return body.rstrip() + ";"
         left, right = body.split("#", 1)
-        return f"{left.rstrip()}; #{right.strip()}"
+        return f"{left.rstrip()}; # {right.strip()}"
+
+    @staticmethod
+    def _line_has_text(file_path: str, line_number: int, needle: str) -> bool:
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            return False
+        try:
+            lines = path.read_text(encoding="utf-8-sig").splitlines()
+        except OSError:
+            return False
+        if line_number < 1 or line_number > len(lines):
+            return False
+        return needle in lines[line_number - 1]

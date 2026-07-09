@@ -1,18 +1,10 @@
 # Lixet
 
-> Deterministic recovery tools for broken Linux configuration.
+Lixet is a deterministic Linux configuration recovery CLI.
 
-Lixet is a lightweight command-line tool for finding and safely repairing common Linux configuration problems.
+It checks common Linux configuration problems, explains what it found, and offers small repairs only when the fix is clear. It is not an AI tool, it does not guess, and it does not rewrite full configuration files.
 
-It is built for cases where a service fails because of a bad configuration, a wrong value, a missing line, or a small mistake that is easy to miss manually.
-
-Lixet does not use AI-generated fixes.
-It doesn't guess.
-It does not rewrite entire configuration files.
-
-Every check is based on deterministic rules, and every repair is limited, explicit, and shown before it is applied.
-
-Lixet is currently in alpha. Use it carefully on important systems and review proposed changes before applying them.
+Lixet is currently beta software. Review every repair before using it on important systems.
 
 ---
 
@@ -20,11 +12,11 @@ Lixet is currently in alpha. Use it carefully on important systems and review pr
 
 ```bash
 git clone https://github.com/behdadaliz/Lixet.git
-CD Lixet
+cd Lixet
 sudo sh install.sh
 ```
 
-After installation, the `lixet` command will be available system-wide:
+After installation, the command is available as:
 
 ```bash
 lixet
@@ -40,10 +32,33 @@ sudo sh uninstall.sh
 
 # Basic Usage
 
-Scan one supported service:
+Show help:
+
+```bash
+lixet
+lixet --help
+```
+
+Show the installed version and the latest GitHub release when available:
+
+```bash
+lixet --version
+```
+
+Update the installed version:
+
+```bash
+sudo lixet --update
+```
+
+Scan one service:
 
 ```bash
 lixet scan ssh
+lixet scan nginx
+lixet scan sudoers
+lixet scan fstab
+lixet scan sysctl
 ```
 
 Scan all supported services:
@@ -56,20 +71,14 @@ Preview repairs without changing files:
 
 ```bash
 lixet scan ssh --dry-run
-lixet doctor -- dry-run
+lixet doctor --dry-run
 ```
 
-Apply supported repairs without confirmation:
+Apply safe repairs without prompting:
 
 ```bash
 lixet scan ssh -y
 lixet doctor -y
-```
-
-Use a custom config path:
-
-```bash
-lixet scan ssh --config /path/to/config
 ```
 
 Disable colored output:
@@ -78,102 +87,89 @@ Disable colored output:
 lixet --no-color scan ssh
 ```
 
-Check version:
-
-```bash
-lixet --version
-```
-
-Update the installed copy:
-
-```bash
-sudo lixet --update
-```
-
----
-
-# Commands
-
-| command | Description
-| ------------------------------------- | ------------------------------------------ |
-| ``lixet'' | Show the help page
-| `lixet --help` | Show the help page
-| `lixet --version` | Show installed and latest version
-| `sudo lixet --update` | Update the installed copy
-| ``lixet scan <service>'' | Scan one supported service
-| `lixet scan <service> --dry-run` | Preview repairs without modifying files
-| `lixet scan <service> -y` | Apply supported repairs without prompting
-| `lixet scan <service> --config <path>` | Scan using a custom config path
-| ``lixet doctor'' | Scan all supported services
-| ``lixet doctor --dry-run'' | Preview repairs for all supported services
-| ``lixet doctor -y'' | Apply supported repairs without prompting
-| `lixet --no-color ...` | Disable colored terminal output
-
 ---
 
 # Supported Services
 
-Lixet currently supports checks for:
+Lixet currently checks:
 
-* SSH
-* Nginx
-* UFW
-* DNS
-* Networking
-* Systemd
+- SSH
+- Nginx
+- UFW
+- DNS resolver configuration
+- Networking and `/etc/hosts`
+- Systemd service units
+- sudoers
+- fstab
+- sysctl configuration
 
-If Lixet cannot prove that a repair is safe, it reports the issue without changing the file.
+Aliases:
+
+- `lixet scan hosts` maps to `networking`
+- `lixet scan firewall` maps to `ufw`
 
 ---
 
-# How Lixet Repairs Files
+# Repair Policy
 
-Lixet follows a strict repair flow:
+Every issue has a repair level:
 
-1. Inspect the target configuration.
-2. Detect known problems using deterministic rules.
-3. Print the issue, location, and evidence when available.
-4. Show the exact planned change.
-5. Ask for confirmation unless `-y' is used.
-6. Create a backup before writing.
-7. Apply a small line-based repair.
-8. Verify the result when a reliable verifier is available.
-9. Restore the backup if verification fails.
+- `safe`: small deterministic file repairs that can run with normal confirmation or `-y`
+- `guarded`: sensitive repairs that require explicit interactive confirmation and are skipped by `-y`
+- `unsafe`: report-only issues with no automatic repair
 
-This keeps repairs predictable and easy to review.
+Lixet uses guarded repairs for changes that could affect remote access, authentication, firewall behavior, boot mounts, sudo access, or service startup behavior.
+
+If Lixet cannot prove that a repair is safe enough, it reports the issue and leaves the system unchanged.
+
+---
+
+# How Repairs Work
+
+When Lixet finds issues, it shows the problem, location, evidence when available, source command when available, repair level, and planned change.
+
+If you approve a repair, Lixet:
+
+1. Shows the planned file change.
+2. Creates a backup before writing.
+3. Applies a small line-based edit.
+4. Runs a verifier when the service has one available.
+5. Restores the backup if verification fails.
+
+`-y` applies only safe repairs. Guarded repairs are skipped with an explanation.
 
 ---
 
 # Safety Model
 
-Lixet is designed to be conservative.
+Lixet is intentionally conservative.
 
-* No AI-generated repairs
-* No guessing
-* No hidden changes
-* No full-file rewrites
-* No repair without backup
-* No destructive repair when the safe fix is ​​unclear
+- No AI-generated repairs
+- No guessing
+- No hidden edits
+- No full-file rewrites
+- No repair without a backup
+- No automatic service restarts
+- No automatic firewall rule deletion
+- No automatic mount or sysctl apply
+- No automatic repair when the safe change is unclear
 
-The goal is to make common configuration problems easier to detect, understand, and safely repair.
+The goal is not to replace an administrator. The goal is to make common configuration problems easier to see and safer to fix.
 
 ---
 
 # Requirements
 
-* Linux
-* Python 3.10+
-* Root or sudo privileges for repairing system configuration files
-
-Some checks may use system tools such as `sshd`, `nginx`, `ufw`, `ip`, or `systemctl` when available.
+- Linux
+- Python 3.10+
+- Root or sudo privileges for repairing system configuration files
+- Relevant system tools for deeper checks, such as `sshd`, `nginx`, `ufw`, `ip`, `systemctl`, `visudo`, or `findmnt`
 
 ---
 
 # Project Status
 
-Lixet is in active alpha development.
-
-The current version focuses on a small set of supported services and safe deterministic repairs. More checks and repair rules will be added over time, but the project will remain focused on predictable behavior, clear output, and safe changes.
+Lixet is in beta. This release focuses on stronger diagnostics, repair safety levels, more supported services, guarded repairs for sensitive changes, and cleaner CLI output.
 
 ---
 
@@ -183,7 +179,7 @@ If Lixet saves you time or helps recover a broken server, you can support the pr
 
 ### TON (Gram)
 
-``text
+```text
 UQANiDCA6hWl7BL0k6iJW9eeJ_BZ207qlrRcK3Fa_K4G_J64
 ```
 
@@ -193,4 +189,4 @@ UQANiDCA6hWl7BL0k6iJW9eeJ_BZ207qlrRcK3Fa_K4G_J64
 
 Lixet is released under the MIT License.
 
-See the `LICENSE' file for details.
+See the `LICENSE` file for details.
