@@ -14,11 +14,12 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+from core.version import normalize_version, read_installed_version
 from utils.ui import UI
 
 
 class LixetUpdater:
-    """Download the latest GitHub source and replace /opt/lixet safely."""
+    """Download the latest GitHub source and update /opt/lixet safely."""
 
     INSTALL_DIR = Path("/opt/lixet")
     BIN_PATH = Path("/usr/local/bin/lixet")
@@ -34,7 +35,9 @@ class LixetUpdater:
         self.ui = UI(no_color=no_color)
 
     def run(self) -> bool:
-        self.ui.banner("Lixet Update", "Downloading the latest GitHub version")
+        self.ui.banner("Lixet Update")
+        self._line("Target", self.INSTALL_DIR.as_posix())
+        print()
         if os.name != "posix":
             self.ui.status("error", "Update is supported on Linux installations only.")
             return False
@@ -49,32 +52,38 @@ class LixetUpdater:
         try:
             with tempfile.TemporaryDirectory(prefix="lixet-update-") as tmp:
                 tmp_path = Path(tmp)
-                archive = self._download(tmp_path)
+                archive, channel = self._download(tmp_path)
                 src = self._extract(archive, tmp_path)
+                if channel:
+                    self._line("Update channel", channel)
+                self.ui.status("info", "Installing updated version...")
                 self._replace_install(src)
         except Exception as exc:
             self.ui.status("error", f"Update failed: {exc}")
             return False
 
         self.ui.status("ok", "Lixet updated successfully.")
-        self.ui.kv("Command", "lixet")
+        print()
+        self._line("Installed version", read_installed_version(self.INSTALL_DIR))
+        self._line("Command", "lixet")
         return True
 
-    def _download(self, tmp_path: Path) -> Path:
+    def _download(self, tmp_path: Path) -> tuple[Path, str | None]:
+        self.ui.status("info", "Checking latest available version...")
         release_archive = self._download_latest_release(tmp_path)
         if release_archive:
-            return release_archive
+            return release_archive, None
 
         last_error: Exception | None = None
         for branch, url in self.SOURCES:
             archive = tmp_path / f"lixet-{branch}.zip"
-            self.ui.status("info", f"Checking GitHub branch: {branch}")
             try:
+                self.ui.status("info", "Downloading update...")
                 request = urllib.request.Request(url, headers={"User-Agent": "Lixet-Updater"})
                 with urllib.request.urlopen(request, timeout=30) as response:
                     archive.write_bytes(response.read())
-                self.ui.status("ok", f"Downloaded latest source from {branch}.")
-                return archive
+                self.ui.status("ok", "Download complete.")
+                return archive, f"{branch} branch"
             except urllib.error.HTTPError as exc:
                 last_error = exc
                 if exc.code == 404:
@@ -97,16 +106,16 @@ class LixetUpdater:
 
         item = releases[0]
         url = item.get("zipball_url")
-        name = item.get("name") or item.get("tag_name") or "latest release"
+        name = normalize_version(str(item.get("tag_name") or "")) or normalize_version(str(item.get("name") or "")) or "latest release"
         if not url:
             return None
 
         archive = tmp_path / "lixet-release.zip"
-        self.ui.status("info", f"Checking GitHub release: {name}")
+        self.ui.status("info", "Downloading update...")
         request = urllib.request.Request(str(url), headers={"User-Agent": "Lixet-Updater"})
         with urllib.request.urlopen(request, timeout=30) as response:
             archive.write_bytes(response.read())
-        self.ui.status("ok", f"Downloaded {name} from GitHub releases.")
+        self.ui.status("ok", "Download complete.")
         return archive
 
     def _extract(self, archive: Path, tmp_path: Path) -> Path:
@@ -121,7 +130,6 @@ class LixetUpdater:
     def _replace_install(self, src: Path) -> None:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup = self.INSTALL_DIR.with_name(f".lixet-update-backup-{stamp}")
-        self.ui.status("info", f"Preparing installed copy: {self.INSTALL_DIR}")
         shutil.move(self.INSTALL_DIR, backup)
         try:
             shutil.copytree(src, self.INSTALL_DIR, ignore=self._ignore)
@@ -154,3 +162,6 @@ class LixetUpdater:
         if name.startswith(".env."):
             return True
         return False
+
+    def _line(self, key: str, value: str) -> None:
+        print(f"{self.ui.c(key.ljust(17), self.ui.BOLD + self.ui.CYAN)}: {value}")

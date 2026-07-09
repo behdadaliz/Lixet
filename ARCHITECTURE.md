@@ -25,7 +25,8 @@ lixet/
 |-- install.sh    Simple Linux installer
 |-- uninstall.sh  Simple Linux uninstaller
 |-- main.py       CLI entry point
-`-- manager.py    Compatibility import path
+|-- manager.py    Compatibility import path
+`-- VERSION       Installed version string
 ```
 
 ---
@@ -51,11 +52,11 @@ lixet/
 
 ## `lixet --update`
 
-`--update` downloads the latest GitHub source archive and replaces the installed `/opt/lixet` copy. If replacement fails, the previous installed copy is restored.
+`--update` downloads the latest GitHub source archive and updates the installed `/opt/lixet` version. If replacement fails, the previous installed version is restored.
 
 ## `lixet --version`
 
-`--version` reads the latest version name from GitHub Releases. If no release exists, it falls back to GitHub tags.
+`--version` reads the installed version from the local `VERSION` file, then checks GitHub Releases for the latest published version name. If no release exists, it falls back to GitHub tags.
 
 ---
 

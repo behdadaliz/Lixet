@@ -68,7 +68,7 @@ Disable colored output:
 lixet --no-color scan ssh
 ```
 
-Show the latest version name from GitHub:
+Show installed and latest version:
 
 ```bash
 lixet --version
@@ -92,7 +92,7 @@ Lixet lists detected problems and lets you choose what to repair.
 
 ## Update
 
-Update the installed copy:
+Update installed version:
 
 ```bash
 sudo lixet --update

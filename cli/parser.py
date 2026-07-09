@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import sys
 import textwrap
+from difflib import get_close_matches
 from functools import partial
 
 from utils.ui import UI
@@ -39,6 +40,15 @@ class LixetArgumentParser(argparse.ArgumentParser):
         return text
 
     def error(self, message: str) -> None:
+        if message.startswith("unrecognized arguments:"):
+            unknown = message.split(":", 1)[1].strip().split()[0]
+            suggestion = get_close_matches(unknown, ["--version", "--update", "--no-color"], n=1)
+            if suggestion:
+                self.exit(
+                    2,
+                    f"{self.ui.c('Unknown option:', self.ui.RED)} {unknown}\n"
+                    f"Did you mean: {self.ui.c(suggestion[0], self.ui.BOLD)}?\n",
+                )
         self.print_usage(sys.stderr)
         self.exit(2, f"{self.prog}: {self.ui.c('error:', self.ui.RED)} {message}\n")
 
@@ -58,8 +68,8 @@ def parse_and_execute(args: list[str]) -> int:
             Available commands:
               lixet                          Show this help page
               lixet --help                   Show this help page
-              lixet --version                Show latest GitHub version and update hint
-              sudo lixet --update            Update the installed Lixet copy
+              lixet --version                Show installed and latest Lixet version
+              sudo lixet --update            Update the installed Lixet version
               lixet scan <service>           Scan one service and offer safe repairs
               lixet scan <service> --dry-run Preview repairs without changing files
               lixet scan <service> -y        Apply all supported repairs without prompting
@@ -71,8 +81,8 @@ def parse_and_execute(args: list[str]) -> int:
               ssh, nginx, ufw, dns, networking, systemd
         """),
     )
-    parser.add_argument("--update", action="store_true", help="Update the installed Lixet copy")
-    parser.add_argument("--version", action="store_true", help="Show latest GitHub version and update hint")
+    parser.add_argument("--update", action="store_true", help="Update the installed Lixet version")
+    parser.add_argument("--version", action="store_true", help="Show installed and latest Lixet version")
     subparsers = parser.add_subparsers(dest="command", parser_class=partial(LixetArgumentParser, no_color=no_color))
 
     scan_parser = subparsers.add_parser("scan", parents=[common], help="Analyze a specific service")
