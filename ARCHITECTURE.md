@@ -56,6 +56,7 @@ lixet/
 Lixet is conservative by design.
 
 - Validators never edit files directly.
+- Validators use real system tools such as `sshd -t` and `nginx -t` when available.
 - Repairs are explicit actions such as `replace`, `delete`, `append`, or `insert_before`.
 - Every write is preceded by a backup.
 - File writes are performed through a temporary file and atomic replace.

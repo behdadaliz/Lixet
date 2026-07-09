@@ -14,8 +14,14 @@ class LixetArgumentParser(argparse.ArgumentParser):
 def parse_and_execute(args: list[str]) -> int:
     parser = LixetArgumentParser(
         prog="lixet",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description=textwrap.dedent("""
-            Lixet - deterministic configuration recovery and diagnostics.
+            Lixet - deterministic Linux configuration recovery.
+
+            Common commands:
+              lixet scan ssh
+              lixet scan nginx --dry-run
+              lixet doctor
         """),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

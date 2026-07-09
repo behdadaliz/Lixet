@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import ipaddress
 
-from validators.helpers import issue
+from validators.helpers import first_match, issue
 
 
 class SSHValidator:
@@ -17,8 +17,11 @@ class SSHValidator:
     def __init__(self, file_path: str = "/etc/ssh/sshd_config") -> None:
         self.file_path = file_path
 
-    def run_rules(self, parsed_data: list[dict]) -> list[dict]:
+    def run_rules(self, data: dict | list[dict]) -> list[dict]:
+        parsed_data = data["lines"] if isinstance(data, dict) else data
         issues: list[dict] = []
+        if isinstance(data, dict):
+            self._check_config_test(data, issues)
         self._check_missing_port(parsed_data, issues)
         self._check_duplicate_ports(parsed_data, issues)
         self._check_invalid_ports(parsed_data, issues)
@@ -41,8 +44,31 @@ class SSHValidator:
         description: str,
         fixes: list[dict] | None = None,
         line_number: int | None = None,
+        evidence: str | None = None,
     ) -> dict:
-        return issue(code, severity, description, self.file_path, fixes, line_number)
+        return issue(code, severity, description, self.file_path, fixes, line_number, "ssh", evidence)
+
+    def _check_config_test(self, data: dict, issues: list[dict]) -> None:
+        test = data.get("config_test")
+        if not test or test["returncode"] == 0:
+            return
+        evidence = test.get("evidence") or "sshd -t failed without output."
+        line_number = None
+        file_path = self.file_path
+        match = first_match(r"(?P<file>[^:\n]+):\s*line\s*(?P<line>\d+):", evidence)
+        if match:
+            file_path = match.group("file")
+            line_number = int(match.group("line"))
+        issues.append(issue(
+            "SSH_CONFIG_TEST_FAILED",
+            "high",
+            "SSH configuration test failed.",
+            file_path,
+            [],
+            line_number,
+            "ssh",
+            evidence,
+        ))
 
     def _check_missing_port(self, parsed_data: list[dict], issues: list[dict]) -> None:
         if self._active(parsed_data, "Port", global_only=True):
@@ -51,7 +77,12 @@ class SSHValidator:
         fix = {"action": "append", "content": "Port 22"}
         if first_match:
             fix = {"action": "insert_before", "line_number": first_match["line_number"], "content": "Port 22"}
-        issues.append(self._issue("SSH_MISSING_PORT", "high", "Missing global Port directive; defaulting to Port 22.", [fix]))
+        issues.append(self._issue(
+            "SSH_MISSING_PORT",
+            "low",
+            "No explicit Port directive found; SSH will use the default port 22.",
+            [fix],
+        ))
 
     def _check_duplicate_ports(self, parsed_data: list[dict], issues: list[dict]) -> None:
         port_lines = self._active(parsed_data, "Port", global_only=True)

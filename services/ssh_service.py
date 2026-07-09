@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from validators.helpers import run_command
+
 
 class SSHService:
     """Read and parse an OpenSSH sshd_config file."""
@@ -12,7 +14,7 @@ class SSHService:
     def __init__(self, config_path: str = "/etc/ssh/sshd_config") -> None:
         self.config_path = config_path
 
-    def inspect(self) -> list[dict]:
+    def inspect(self) -> dict:
         path = Path(self.config_path)
         if not path.exists():
             raise FileNotFoundError(f"SSH configuration not found: {self.config_path}")
@@ -35,7 +37,11 @@ class SSHService:
             if directive.lower() == "match":
                 in_match = True
 
-        return parsed_data
+        return {
+            "file_path": str(path),
+            "lines": parsed_data,
+            "config_test": run_command(["sshd", "-t", "-f", self.config_path]),
+        }
 
     @staticmethod
     def _record(

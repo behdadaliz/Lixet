@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import stat
-import sys
 from pathlib import Path
 
 BIN_PATH = Path("/usr/local/bin/lixet")
+INSTALL_DIR = Path("/opt/lixet")
+SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "env", "developer", "docker", "tests"}
+SKIP_NAMES = {".env"}
 
 
 def require_root() -> None:
@@ -21,10 +24,16 @@ def require_root() -> None:
 def install() -> None:
     require_root()
     base_dir = Path(__file__).resolve().parent
-    main_script = base_dir / "main.py"
-    if not main_script.exists():
-        raise SystemExit(f"Could not find entry point: {main_script}")
+    src_main = base_dir / "main.py"
+    if not src_main.exists():
+        raise SystemExit(f"Could not find entry point: {src_main}")
 
+    if INSTALL_DIR.exists():
+        shutil.rmtree(INSTALL_DIR)
+    INSTALL_DIR.mkdir(parents=True)
+    _copy_tree(base_dir, INSTALL_DIR)
+
+    main_script = INSTALL_DIR / "main.py"
     mode = stat.S_IMODE(main_script.stat().st_mode)
     main_script.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -32,6 +41,7 @@ def install() -> None:
         BIN_PATH.unlink()
     BIN_PATH.symlink_to(main_script)
     print(f"Installed lixet -> {main_script}")
+    print("Command available as: lixet")
 
 
 def uninstall() -> None:
@@ -41,6 +51,33 @@ def uninstall() -> None:
         print(f"Removed {BIN_PATH}")
     else:
         print(f"{BIN_PATH} is not installed")
+    if INSTALL_DIR.exists():
+        shutil.rmtree(INSTALL_DIR)
+        print(f"Removed {INSTALL_DIR}")
+
+
+def _skip(path: Path) -> bool:
+    if path.name in SKIP_DIRS or path.name in SKIP_NAMES:
+        return True
+    if path.name.endswith(".pyc"):
+        return True
+    if path.name.endswith(".bak") or ".lixet." in path.name and path.name.endswith(".bak"):
+        return True
+    if path.name.startswith(".env."):
+        return True
+    return False
+
+
+def _copy_tree(src: Path, dst: Path) -> None:
+    for item in src.iterdir():
+        if _skip(item):
+            continue
+        target = dst / item.name
+        if item.is_dir():
+            target.mkdir()
+            _copy_tree(item, target)
+        elif item.is_file():
+            shutil.copy2(item, target)
 
 
 def main(argv: list[str] | None = None) -> int:

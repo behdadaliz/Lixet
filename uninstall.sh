@@ -3,6 +3,7 @@
 set -eu
 
 BIN_PATH="/usr/local/bin/lixet"
+INSTALL_DIR="/opt/lixet"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Uninstall requires root privileges. Try: sudo sh uninstall.sh" >&2
@@ -14,4 +15,9 @@ if [ -e "$BIN_PATH" ] || [ -L "$BIN_PATH" ]; then
     echo "Removed $BIN_PATH"
 else
     echo "$BIN_PATH is not installed"
+fi
+
+if [ -d "$INSTALL_DIR" ]; then
+    rm -rf "$INSTALL_DIR"
+    echo "Removed $INSTALL_DIR"
 fi

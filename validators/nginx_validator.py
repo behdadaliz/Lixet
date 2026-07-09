@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from validators.helpers import issue
+from validators.helpers import first_match, issue
 
 
 class NginxValidator:
@@ -22,6 +22,7 @@ class NginxValidator:
     def run_rules(self, data: dict) -> list[dict]:
         rows = data["lines"]
         issues: list[dict] = []
+        self._check_config_test(data, issues)
         self._check_braces(rows, issues)
         self._check_semicolons(rows, issues)
         self._check_worker_processes(rows, issues)
@@ -29,7 +30,29 @@ class NginxValidator:
         return issues
 
     def _issue(self, code: str, severity: str, desc: str, fixes: list[dict] | None = None, line: int | None = None) -> dict:
-        return issue(code, severity, desc, self.file_path, fixes, line)
+        return issue(code, severity, desc, self.file_path, fixes, line, "nginx")
+
+    def _check_config_test(self, data: dict, issues: list[dict]) -> None:
+        test = data.get("config_test")
+        if not test or test["returncode"] == 0:
+            return
+        evidence = test.get("evidence") or "nginx -t failed without output."
+        file_path = self.file_path
+        line_number = None
+        match = first_match(r"in\s+(?P<file>\S+):(?P<line>\d+)", evidence)
+        if match:
+            file_path = match.group("file")
+            line_number = int(match.group("line"))
+        issues.append(issue(
+            "NGINX_CONFIG_TEST_FAILED",
+            "high",
+            "Nginx configuration test failed.",
+            file_path,
+            [],
+            line_number,
+            "nginx",
+            evidence,
+        ))
 
     def _clean(self, row: dict) -> str:
         txt = row["text"]

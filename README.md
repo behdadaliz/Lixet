@@ -6,6 +6,8 @@ Lixet is a lightweight Linux command-line tool that detects, explains, and safel
 
 It is deterministic by design. Lixet does not guess, does not use AI for repairs, and does not rewrite whole configuration files. It applies small, explicit fixes only after showing the problem and asking for approval.
 
+Lixet is currently in alpha. Review every proposed repair before applying it on important systems.
+
 ---
 
 # Installation
