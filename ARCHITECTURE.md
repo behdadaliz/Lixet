@@ -1,120 +1,73 @@
 # Lixet Architecture
 
-Lixet is a deterministic Linux configuration recovery CLI. It inspects known configuration targets, reports evidence-based issues, and applies small reversible repairs only when the repair is safe enough and approved.
+Lixet separates inspection, diagnosis, authorization, mutation, and verification. Validators never write files, and a finding is not repairable unless it contains exact snapshot-bound repair actions.
 
-The installed user command is:
-
-```bash
-lixet
-```
-
----
-
-# Structure
+## Repository Layout
 
 ```text
-lixet/
-|-- backup/       Backup and restore logic
-|-- cli/          Command parsing for lixet
-|-- core/         Scan, doctor, update, prompt, repair, and verification flow
-|-- repair/       Safe line-based file repair operations
-|-- services/     File and runtime inspection for supported Linux services
-|-- utils/        Shared CLI output helpers
-|-- validators/   Deterministic validation rules
-|-- install.py    Python installer and uninstaller
-|-- install.sh    Simple Linux installer
-|-- uninstall.sh  Simple Linux uninstaller
-|-- main.py       CLI entry point
-|-- manager.py    Compatibility import path
-`-- VERSION       Clean semantic version string
+backup/       Protected backup bundles and restore verification
+cli/          Argument parsing and command dispatch
+core/         Engine, typed models, versioning, installer, and updater
+repair/       Snapshots, exact text edits, locking, and transactions
+services/     File discovery and trusted local command inspection
+utils/        Command runner and terminal UI
+validators/   Deterministic issue rules
+tests/        Isolated fixtures, regressions, and failure injection
+install.py    Shared Python install and uninstall entry point
+install.sh    Minimal Linux install wrapper
+uninstall.sh  Minimal Linux uninstall wrapper
+main.py       CLI entry point
+VERSION       Canonical SemVer version
 ```
 
----
+Runtime code uses the Python standard library. Ruff, mypy, pytest, coverage, and ShellCheck are development and CI tools only.
 
-# Command Flow
+## Scan Flow
 
-## `lixet scan ssh`
+For `lixet scan <service>`:
 
-1. `main.py` starts the CLI.
-2. `cli/` parses the command.
-3. `core/` selects the requested service.
-4. `services/` reads files and runs safe system inspection commands when available.
-5. `validators/` return deterministic issue dictionaries.
-6. `core/` orders issues by severity: critical, high, medium, low, info.
-7. `utils/` prints clean terminal output.
-8. If no automatic repair exists, Lixet reports that and does not ask for a repair selection.
-9. If a repair is approved, `backup/` creates a backup.
-10. `repair/` applies the exact line-based change through an atomic write.
-11. `core/` verifies the result when a verifier is available.
-12. If verification fails, the backup is restored.
+1. `cli/parser.py` validates the command. A custom path is accepted only by `scan`.
+2. `core/engine.py` resolves the service and builds an inspector with an injectable filesystem root and command runner.
+3. A class under `services/` discovers exact files, captures snapshots, and runs bounded local inspection commands when available.
+4. A class under `validators/` returns typed issue-shaped dictionaries with deterministic IDs, evidence, severity, and optional exact fixes.
+5. The engine displays the check status and findings. It does not call repair code when no repair is available.
+6. Dry-run previews the snapshot-bound changes without creating a backup or writing.
+7. Interactive use can select one finding or all repairable findings. `-y` selects safe repairs only; guarded repairs require typing `APPLY`.
+8. `RepairTransaction` groups actions by path, rejects cross-service writes to one file, acquires process/thread locks, verifies snapshots, and creates every backup before the first write.
+9. `RepairManager` applies exact line operations to the resolved regular target using a temporary file on the same filesystem, `fsync`, and atomic replacement. A supported symlink remains a symlink.
+10. The engine re-inspects the service, confirms repaired findings disappeared, rejects new equal-or-higher-severity findings, and runs a required external verifier where applicable.
+11. Any failure or interruption rolls the complete repair group back in reverse order. Rollback failure has its own exit code and is never hidden.
+12. The engine performs a final service rescan before returning.
 
-## `lixet doctor`
+`lixet doctor` runs the same inspection path for every registered service without sharing a custom configuration path. It reports each service as checked, not installed, configuration absent, configuration missing, unsupported, or failed. A required skipped or failed check cannot result in a healthy exit.
 
-`doctor` scans all supported services, merges issues, sorts them by severity, and shows a summary. Repairable issues are grouped by repair level. Safe repairs can be applied normally. Guarded repairs require explicit manual confirmation and are skipped by `-y`.
+## Service Registry
 
-## `lixet services`
+The registry in `core/engine.py` is the source of truth for `scan`, `doctor`, and `services`. Each entry contains:
 
-`services` prints the supported service names with a short description for each one. It reads from the same service registry used by `scan` and `doctor`.
+- inspector and validator classes;
+- default configuration path;
+- a discovery command;
+- whether the file is system-critical;
+- whether absence is a valid configuration state;
+- the description shown by `lixet services`.
 
-## `lixet --version`
+Aliases are resolved before lookup. Runtime systemd inspection still runs when `/etc/systemd/system` has no local units.
 
-`--version` reads the installed version from `/opt/lixet/VERSION` when running as an installed command. When running from a source checkout, it reads the project root `VERSION` file. It optionally checks GitHub Releases and falls back to tags when release data is unavailable.
+## Issue And Repair Models
 
-Preferred release tag format:
+`core/models.py` defines:
 
-```text
-v0.2.0-beta
-```
+- `ExitCode` for the stable process result contract;
+- `RepairLevel` for `safe`, `guarded`, and report-only (`unsafe`) findings;
+- `VerificationState` for verified, internally verified, unavailable external verification, failed verification, and rollback failure;
+- typed repair actions and issues;
+- `VerificationResult`.
 
-## `lixet --update`
-
-`--update` downloads a GitHub source archive into a temporary directory, extracts it, validates required project files, validates `VERSION`, and only then replaces `/opt/lixet`.
-
-If validation or replacement fails, the previous installation is kept or restored.
-
----
-
-# Repair Levels
-
-Every issue can declare a repair level:
-
-- `safe`: small deterministic line repair; can run with normal confirmation or `-y`
-- `guarded`: sensitive repair; requires explicit interactive confirmation and is skipped by `-y`
-- `unsafe`: report-only; never repaired automatically
-
-Guarded repairs are used for changes that can affect SSH access, root/password login, firewall startup, DNS resolver behavior, sudo access, boot mounts, or service startup behavior.
-
----
-
-# Issue Model
-
-Validators return dictionaries with a consistent shape:
-
-- `id`
-- `code`
-- `severity`
-- `service`
-- `description`
-- `file_path`
-- `line_number`
-- `evidence`
-- `source_command`
-- `safety_note`
-- `risk_note`
-- `rollback_note`
-- `repairable`
-- `repair_level`
-- `fixes`
-
-Validators never edit files directly.
-
----
-
-# Repair Actions
-
-`repair/manager.py` supports small line-oriented actions:
+Issue IDs include stable issue identity data and are not only repeated rule codes. Repair actions include expected original line or end-of-file content. Supported actions are:
 
 - `append`
+- `append_token`
 - `replace`
 - `replace_preserve_comment`
 - `delete`
@@ -123,57 +76,68 @@ Validators never edit files directly.
 - `insert_before`
 - `insert_after`
 
-Commenting out is preferred over deleting when preserving user content is safer.
+The manager rejects unsupported actions, missing preconditions, conflicting edits, changed lines, changed file endings, invalid UTF-8, and out-of-range locations.
 
----
+## Snapshot And Symlink Model
 
-# Supported Rule Groups
+`repair/snapshot.py` records the original and resolved paths, link target, device, inode, size, timestamps, SHA-256 content hash, mode, uid, and gid. Snapshot capture rejects missing, broken, cyclic, non-regular, unreadable, or changing targets.
 
-Lixet currently includes deterministic rules for:
+When a static symlink is intentionally followed, output includes both link and resolved target. Repair replaces only the resolved regular file atomically and verifies that the original link object still exists. Managed resolver links are identified by `DNSService` and remain report-only.
 
-- SSH syntax validation through `sshd -t -f`, port directives, authentication directives, root login warnings, `ListenAddress`, and exact-line guarded repairs for invalid directives
-- Nginx syntax validation through `nginx -t -c`, semicolon fixes, worker process value, events block presence, brace diagnostics, and exact-line guarded repairs for invalid directives
-- UFW runtime status, inactive firewall reporting, SSH exposure checks, boolean settings, duplicate settings, and default policy validation
-- DNS resolver file presence, nameserver validation, duplicate nameservers, resolver command diagnostics, and guarded fallback resolver repair
-- Networking default route, non-loopback interface state, non-loopback IP address, and safe `/etc/hosts` localhost recovery
-- Systemd degraded state, failed units, unit section validation, `ExecStart`, `Restart`, and `Type`
-- sudoers validation through `visudo -cf`
-- fstab validation through `findmnt --verify --tab-file`
-- sysctl configuration parsing and duplicate key detection
+Current metadata preservation covers mode, uid, gid, and timestamps where the operating system permits it. Explicit SELinux label, ACL, and extended-attribute preservation is a known limitation.
 
-Aliases:
+## Backups And Transactions
 
-- `hosts` maps to `networking`
-- `firewall` maps to `ufw`
+`BackupManager` stores bundles under `/var/lib/lixet/backups` by default. Tests inject a temporary directory.
 
----
+Each collision-resistant bundle contains:
 
-# Safety Model
+- `content`, mode `0600` on POSIX;
+- `manifest.json`, mode `0600` on POSIX;
+- an ID and timestamp;
+- original, resolved, and symlink paths;
+- SHA-256, ownership, mode, and timestamps;
+- service and repair IDs;
+- verification state.
 
-Lixet is conservative by design.
+The backup root uses mode `0700` on POSIX. Manifest loading validates identifiers and resolved containment, and restore verifies the content hash and restored state. Backups are outside configuration include directories and are not silently removed after a repair.
 
-- Validators use deterministic rules and real system tools when available.
-- Non-repairable issues are shown with evidence but are not offered as automatic fixes.
-- Every write is preceded by a backup.
-- File writes are performed through a temporary file and atomic replace.
-- Unsupported or conflicting repair actions are rejected.
-- `-y` only confirms safe repairs.
-- Guarded repairs require manual confirmation.
-- Service verification runs when a verifier exists.
-- Failed verification triggers restore from backup.
-- Lixet never restarts SSH, Nginx, UFW, or failed systemd services automatically.
-- Lixet never runs `mount -a` or applies sysctl values automatically.
+Multi-file transactions back up all targets before writing any target. They roll back on normal exceptions, `KeyboardInterrupt`, and `SystemExit`. Cancellation is re-raised after rollback.
 
-If a safe automatic repair is not clear, Lixet reports the problem without changing the file.
+## Trusted Commands
 
----
+`utils/command.py` does not search the inherited `PATH`. It resolves commands only inside approved system directories, validates executable and parent ownership/permissions on POSIX, uses `shell=False`, supplies a controlled environment with `LC_ALL=C`, sets strict timeouts, and bounds captured output.
 
-# Design Principles
+Unavailable commands are represented as unavailable checks. They are not treated as successful verifiers.
 
-- Keep the CLI simple.
-- Prefer the Python standard library.
-- Never use AI-generated repairs.
-- Avoid broad rewrites.
-- Repair only what can be explained.
-- Back up before modifying.
-- Leave risky cases for the user to review.
+Authoritative tools currently include:
+
+- `sshd -t` and effective `sshd -T` inspection;
+- `nginx -t` against the root configuration;
+- `visudo -cf`;
+- `findmnt --verify --tab-file`;
+- `systemd-analyze verify`.
+
+Other commands such as `ufw`, `ip`, `systemctl`, and `resolvectl` provide read-only runtime evidence.
+
+## Validator Policy
+
+- **SSH:** follows includes with cycle, depth, and file bounds; applies first-obtained-value semantics; treats hardening as policy; never auto-disables root or password access. Only one exact `sshd`-rejected directive may become guarded.
+- **Nginx:** follows exact includes with bounds; handwritten brace and semicolon checks are quote/comment aware and report-only; `nginx -t` is authoritative.
+- **DNS:** detects managed resolver setups and containers; performs no external lookup; never inserts a universal fallback resolver.
+- **Networking:** validates address fields and runtime permission errors separately. Only standard localhost recovery is safe.
+- **UFW:** reads state and defaults from their proper files, respects last-assignment semantics, and keeps policy/startup changes report-only. It executes no firewall-changing command.
+- **systemd:** inspects runtime failures independently of local units, reads drop-ins, accepts optional `[Unit]` and valid oneshot forms, and keeps behavior changes report-only.
+- **sudoers:** trusts `visudo`; the main file is never automatically repaired. One exact included-file syntax line may become guarded.
+- **fstab:** uses `findmnt`, parses escaped whitespace, and never runs `mount -a`. Findings are report-only.
+- **sysctl:** models directory/file precedence and `/etc/sysctl.conf`, reports complete override evidence, and never changes or applies kernel policy automatically.
+
+## Installer And Updater
+
+`InstallTransaction` is shared by `install.py` and the updater. It validates exact required file types, writes an ownership marker, stages into a unique directory, preserves the previous installation and command entry, and restores both after failures. It removes only staging and backup paths created by its transaction.
+
+The updater selects a newer GitHub Release from the installed stable or prerelease channel. It has no branch fallback. A release must provide `lixet-<version>.zip` and a SHA-256 asset. Downloads and extraction are bounded; path traversal, duplicate paths, symlinks, special files, oversized content, mismatched versions, same-version reinstalls, and downgrades are rejected. Staging receives compile and CLI smoke checks before the install transaction begins.
+
+## Non-Goals
+
+Lixet does not automatically restart services, alter firewall rules, mount filesystems, apply sysctl settings, choose DNS providers, or decide an administrator's SSH/authentication policy. Those operations require system context that the current deterministic safety model cannot prove.

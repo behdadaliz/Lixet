@@ -1,0 +1,78 @@
+# GitHub: https://github.com/behdadaliz/Lixet.git | Author: behdadaliz
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lixet"
+dynamic = ["version"]
+description = "Deterministic Linux configuration diagnosis and conservative repair CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Behdad Alizadeh" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "coverage[toml]>=7.6",
+    "mypy>=1.11",
+    "pytest>=8.3",
+    "ruff>=0.9",
+]
+
+[project.scripts]
+lixet = "main:main"
+
+[tool.setuptools]
+py-modules = ["main", "manager"]
+
+[tool.setuptools.dynamic]
+version = { file = ["VERSION"] }
+
+[tool.setuptools.packages.find]
+include = ["backup*", "cli*", "core*", "repair*", "services*", "utils*", "validators*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-config", "--strict-markers"]
+
+[tool.coverage.run]
+branch = true
+source = ["."]
+omit = ["tests/*", ".venv/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 80
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-exclude = [".venv"]
+cache-dir = ".cache/ruff"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"main.py" = ["UP036"]
+
+[tool.ruff.format]
+quote-style = "double"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.10"
+files = ["backup", "cli", "core", "repair", "services", "utils", "validators", "install.py", "main.py"]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+pretty = true

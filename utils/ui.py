@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from textwrap import wrap
+from typing import TextIO
 
 
 class UI:
@@ -21,8 +23,17 @@ class UI:
     BLUE = "\033[94m"
     RESET = "\033[0m"
 
-    def __init__(self, no_color: bool = False) -> None:
+    CONTROL_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+
+    def __init__(
+        self,
+        no_color: bool = False,
+        stdin: TextIO | None = None,
+        force_interactive: bool = False,
+    ) -> None:
         self.color = False if no_color else self._supports_color()
+        self.stdin = stdin or sys.stdin
+        self.force_interactive = force_interactive
 
     def banner(self, title: str, subtitle: str | None = None) -> None:
         print()
@@ -87,9 +98,10 @@ class UI:
             self.kv("Rollback", str(item["rollback_note"]))
 
     def kv(self, key: str, value: str) -> None:
-        print(f"  {self.c((key + ':').ljust(12), self.BOLD + self.CYAN)} {value}")
+        print(f"  {self.c((key + ':').ljust(12), self.BOLD + self.CYAN)} {self.clean(str(value))}")
 
     def bullet(self, text: str) -> None:
+        text = self.clean(text)
         lines = wrap(text, width=88, subsequent_indent="      ") or [text]
         print(f"  {self.c('-', self.CYAN)} {lines[0]}")
         for line in lines[1:]:
@@ -97,11 +109,26 @@ class UI:
 
     def evidence(self, text: str) -> None:
         print(f"  {self.c('Evidence:', self.BOLD)}")
-        for line in text.strip().splitlines():
+        for line in self.clean(text).strip().splitlines():
             print(f"    {self.c(line, self.GRAY)}")
 
     def prompt(self, text: str) -> str:
-        return input(self.c(text, self.BOLD))
+        if not self.can_prompt():
+            return ""
+        try:
+            print(self.c(text, self.BOLD), end="", flush=True)
+            value = self.stdin.readline()
+        except (EOFError, OSError):
+            return ""
+        return value.rstrip("\r\n") if value else ""
+
+    def can_prompt(self) -> bool:
+        if self.force_interactive:
+            return True
+        try:
+            return bool(self.stdin.isatty())
+        except (AttributeError, OSError):
+            return False
 
     def severity(self, severity: str) -> str:
         colors = {
@@ -126,9 +153,17 @@ class UI:
         return action
 
     def c(self, text: str, code: str) -> str:
+        text = self.clean(str(text))
         if not self.color or not code:
             return text
         return f"{code}{text}{self.RESET}"
+
+    @classmethod
+    def clean(cls, text: str) -> str:
+        text = cls.CONTROL_RE.sub("", str(text))
+        return "".join(
+            char if char in {"\n", "\r", "\t"} or ord(char) >= 32 and ord(char) != 127 else "?" for char in text
+        )
 
     @staticmethod
     def location(item: dict) -> str:

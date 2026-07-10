@@ -1,120 +1,110 @@
-# Contributing to Lixet
+# Contributing To Lixet
 
-Thank you for considering a contribution to Lixet.
+Lixet may inspect and modify security-sensitive Linux configuration. A contribution should be deterministic, conservative, and testable without touching the developer's real system.
 
-Lixet is a deterministic recovery tool for Linux administrators. Changes should keep the project simple, safe, evidence-based, and easy to review.
+## Ground Rules
 
----
+- Do not add AI-generated diagnosis or repair behavior.
+- Prefer the Python standard library for runtime code.
+- Never use the inherited `PATH` for system inspection commands.
+- Validators diagnose; they do not write files or run policy-changing commands.
+- Keep uncertain findings report-only.
+- Do not restart services, alter firewall rules, mount filesystems, or apply sysctl values.
+- Do not weaken snapshot, backup, transaction, verification, or updater checks to make a feature easier.
+- Preserve unrelated user changes and keep pull requests focused.
 
-# Principles
+## Local Setup
 
-- Keep the user command simple: `lixet services`, `lixet scan <service>`, and `lixet doctor`, with small maintenance flags such as `--version` and `--update`.
-- Do not add AI-generated diagnosis or repair logic.
-- Prefer the Python standard library.
-- Do not modify system files outside the backup and repair flow.
-- Keep repairs small, explicit, previewable, and explainable.
-- Include evidence whenever a system command, parser, or file inspection provides it.
-- Keep CLI output clean in colored terminals and plain logs.
-- Report uncertain problems instead of guessing a fix.
+Use Python 3.10 or newer. Development dependencies are optional and are not installed by Lixet at runtime.
 
----
+```bash
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e ".[dev]"
+```
 
-# Issue Data
+On Windows, activate with `.venv\Scripts\activate`. Runtime behavior remains Linux-only; Windows is useful for isolated unit tests.
 
-Validators should return issue dictionaries with these fields:
+Run the local quality checks:
 
-- `id`
-- `code`
-- `severity`
-- `service`
-- `description`
-- `file_path`
-- `line_number`
-- `evidence`
-- `source_command`
-- `safety_note`
-- `risk_note`
-- `rollback_note`
-- `repairable`
-- `repair_level`
-- `fixes`
+```bash
+python -m compileall -q backup cli core repair services utils validators install.py main.py
+python -m pytest
+python -m coverage run -m pytest
+python -m coverage report
+python -m ruff format --check .
+python -m ruff check .
+python -m mypy
+shellcheck install.sh uninstall.sh
+```
 
-Repair levels:
+ShellCheck and Linux symlink behavior should also pass in GitHub Actions. No test may read or modify the host's real `/etc`, `/opt`, `/var/lib/lixet`, or `/usr/local/bin` paths.
 
-- `safe`: small deterministic repairs that can run with normal confirmation or `-y`
-- `guarded`: sensitive repairs that require explicit manual confirmation
-- `unsafe`: report-only issues with no automatic repair
+## Adding Or Changing A Service
 
-Use severity carefully:
+1. Put file discovery and read-only command inspection under `services/`.
+2. Make filesystem roots and external commands injectable.
+3. Put deterministic diagnosis under `validators/`.
+4. Return the shared issue shape and include evidence and source commands when available.
+5. Register metadata in `core/engine.py` so `scan`, `doctor`, and `services` stay consistent.
+6. Add realistic temporary fixtures, failure cases, and distribution-specific cases when semantics differ.
+7. Update documentation only after behavior and tests are stable.
 
-- `critical`
-- `high`
-- `medium`
-- `low`
-- `info`
+Use official upstream documentation as the source of truth for OpenSSH, Nginx, systemd, sudo/visudo, util-linux/findmnt, procps/sysctl, UFW, and resolver semantics.
 
-Syntax failures from real validators such as `sshd -t`, `nginx -t`, `visudo -cf`, or `findmnt --verify` should appear before lower-severity recommendations.
+## Findings And Repair Levels
 
----
+Every finding includes a unique `id`, stable `code`, severity, service, location, evidence, safety notes, repair level, and zero or more exact fixes.
 
-# Adding a Validator
+- `safe`: deterministic and narrowly scoped, with focused regression coverage. It may be approved by `-y`.
+- `guarded`: sensitive, exact, reversible, and externally verifiable. It requires typing `APPLY` interactively.
+- `unsafe`: report-only. Despite the internal enum value, this means Lixet refuses to perform the change automatically.
 
-When adding support for a service:
+Do not label a repair safe because it is common. Prove that:
 
-1. Add inspection logic under `services/`.
-2. Add deterministic rules under `validators/`.
-3. Return clear issue data with evidence and source command when available.
-4. Declare `repair_level` for every repair.
-5. Add `risk_note` for guarded repairs.
-6. Use only repair actions supported by `repair/manager.py`.
-7. Add service registration in `core/engine.py`.
-8. Add verifier support when a reliable command exists.
+- the broken state and desired state are unambiguous;
+- expected original content binds every edit to the inspection snapshot;
+- unrelated formatting, comments, aliases, and line endings survive;
+- backup and rollback cover interruption and verification failure;
+- post-repair inspection removes the finding without introducing an equal-or-higher-severity issue;
+- a required authoritative verifier is available and passes.
 
-Validators should never write files directly.
+The main sudoers file, firewall policy, DNS provider choice, mount behavior, sysctl policy, SSH authentication policy, and service behavior should remain report-only unless a future design proves stronger guarantees.
 
----
+## Tests
 
-# Repair Rules
+Use `TemporaryDirectory`, injected roots, fake command runners, fake release responses, and mocked installers. Mandatory safety tests cannot be skipped.
 
-A repair should be added only when:
+Tests should cover healthy, broken, unavailable-tool, permission, concurrent-edit, interruption, rollback, and malicious-input paths. A repair test should assert both the intended change and preservation of unrelated bytes or metadata.
 
-- The problem is deterministic.
-- The expected healthy state is clear.
-- The repair can be previewed.
-- The original file is backed up first.
-- Verification can run when the service provides a reliable verifier.
-- The repair does not restart services or make broad system changes.
+When a platform cannot create real symlinks locally, keep a non-skipped simulation and rely on the Linux CI job for the real symlink path. Do not mark the platform-independent safety test as skipped.
 
-Use guarded repairs for changes that could affect access, authentication, firewall behavior, DNS behavior, sudo access, boot mounts, or service startup behavior.
+Coverage must remain at or above the configured threshold. Raising raw coverage is not a substitute for meaningful failure-injection tests.
 
-If these conditions are not true, report the issue without an automatic fix.
+## Installer And Release Changes
 
----
+Installer and updater changes require phase failure injection. Never test them against real install paths.
 
-# Pull Requests
+The updater accepts only versioned GitHub Release assets:
 
-Before opening a pull request:
+```text
+lixet-<version>.zip
+lixet-<version>.zip.sha256
+```
 
-1. Keep the change focused.
-2. Avoid unrelated refactors.
-3. Use clear names for validators, services, and issue codes.
-4. Update user-facing documentation when behavior changes.
-5. Explain what problem the change solves and what evidence supports it.
+`SHA256SUMS` is also accepted as the checksum asset, but it must contain an entry for the exact release archive name. The release tag, archive filename, and canonical `VERSION` content must agree under SemVer normalization. Do not add mutable branch fallback or silent downgrade behavior.
 
-For larger changes, open an issue first so the design can be discussed.
+Do not bump `VERSION` repeatedly. Update it once after the full quality gate passes, then update `README.md`, `ARCHITECTURE.md`, and `CONTRIBUTING.md` if the behavior changed. Publishing a GitHub release is a separate maintainer action.
 
----
+## Pull Requests
 
-# Bug Reports
+A pull request should state:
 
-Good bug reports include:
+- the problem and affected safety property;
+- the source documentation used for configuration semantics;
+- tests that failed before and pass after the change;
+- whether files, privileges, network access, or trusted commands are involved;
+- documentation and compatibility impact;
+- remaining limitations.
 
-- The exact command that was run
-- The Linux distribution
-- The affected service
-- The relevant configuration file
-- The exact terminal output
-- What you expected Lixet to do
-- What actually happened
-
-Remove secrets, private keys, tokens, private IPs, and hostnames before posting logs or configuration snippets.
+Use the pull request template and remove secrets, private keys, tokens, hostnames, private addresses, and sensitive configuration from all examples and logs.

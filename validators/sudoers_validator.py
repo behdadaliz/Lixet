@@ -1,85 +1,116 @@
 # GitHub: https://github.com/behdadaliz/Lixet.git | Author: behdadaliz
-"""Deterministic sudoers validator."""
+"""sudoers diagnostics using visudo as the authoritative parser."""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
-from validators.helpers import first_match, issue
+from validators.helpers import issue
 
 
 class SudoersValidator:
+    ERROR_PATTERNS = (
+        re.compile(r"(?P<file>(?:[A-Za-z]:)?[^:\n]+):(?P<line>\d+):"),
+        re.compile(r"(?P<file>(?:[A-Za-z]:)?\S+)\s+near line\s+(?P<line>\d+)", re.I),
+    )
+
     def __init__(self, file_path: str = "/etc/sudoers") -> None:
         self.file_path = file_path
 
     def run_rules(self, data: dict) -> list[dict]:
-        issues: list[dict] = []
         test = data.get("config_test")
         if not test:
-            issues.append(issue(
-                "SUDOERS_VISUDO_MISSING",
-                "info",
-                "visudo is not available; sudoers syntax validation was skipped.",
-                self.file_path,
-                [],
-                None,
-                "sudoers",
-                None,
-                "No automatic repair is applied.",
-                None,
-                "unsafe",
-            ))
-            return issues
-        if test["returncode"] == 0:
-            return issues
-
-        evidence = test.get("evidence") or "visudo validation failed without output."
-        file_path = self.file_path
-        line_number = None
-        match = first_match(r"(?P<file>/[^\s:]+):(?P<line>\d+):", evidence)
-        if match:
-            file_path = match.group("file")
-            line_number = int(match.group("line"))
-
+            return [
+                self._make(
+                    "SUDOERS_VERIFIER_UNAVAILABLE", "info", "visudo is unavailable; sudoers validation was not run."
+                )
+            ]
+        if test.get("returncode") == 0:
+            return []
+        evidence = str(test.get("evidence") or "visudo failed without output.")
+        file_path, line_number = self._location(evidence)
+        row = self._find_row(data.get("files", []), file_path, line_number)
         fixes: list[dict] = []
         level = "unsafe"
-        risk = "Breaking sudoers can lock administrators out. Most sudoers repairs are report-only."
-        if line_number and self._safe_sudoers_d_line(file_path, line_number):
-            fixes = [{
-                "action": "comment_out_with_reason",
-                "line_number": line_number,
-                "reason": "Lixet disabled sudoers line rejected by visudo",
-            }]
+        risk = (
+            "Never edit the main sudoers file automatically. Use visudo and keep another administrative session open."
+        )
+        if row and self._included_file(file_path):
+            fixes = [
+                {
+                    "action": "comment_out_with_reason",
+                    "line_number": row["line_number"],
+                    "expected_original": row["raw_line"],
+                    "reason": "Lixet disabled line rejected by visudo",
+                }
+            ]
             level = "guarded"
-            risk = "This comments out a sudoers.d line rejected by visudo. Confirm another admin path first."
+            risk = "This disables one included sudoers rule. Confirm another administrative path before approval."
+        return [
+            self._make(
+                "SUDOERS_CONFIG_TEST_FAILED",
+                "critical",
+                "visudo rejected the sudoers configuration.",
+                row,
+                file_path,
+                evidence,
+                test.get("command"),
+                fixes,
+                level,
+                risk,
+            )
+        ]
 
-        issues.append(issue(
-            "SUDOERS_CONFIG_TEST_FAILED",
-            "critical",
-            "sudoers validation failed.",
-            file_path,
+    def _make(
+        self,
+        code: str,
+        severity: str,
+        description: str,
+        row: dict | None = None,
+        path: str | None = None,
+        evidence: str | None = None,
+        command: str | None = None,
+        fixes: list[dict] | None = None,
+        level: str = "unsafe",
+        risk: str | None = None,
+    ) -> dict:
+        return issue(
+            code,
+            severity,
+            description,
+            path or self.file_path,
             fixes,
-            line_number,
+            int(row["line_number"]) if row else None,
             "sudoers",
             evidence,
-            "No automatic repair is applied unless an exact sudoers.d line can be commented safely.",
-            test.get("command"),
+            "The main sudoers file is never repaired automatically.",
+            command,
             level,
             risk,
-            "A backup is restored automatically if visudo verification fails.",
-        ))
-        return issues
+            "A protected backup is restored if visudo validation fails." if fixes else None,
+        )
+
+    def _location(self, evidence: str) -> tuple[str, int | None]:
+        for pattern in self.ERROR_PATTERNS:
+            match = pattern.search(evidence)
+            if match:
+                return match.group("file"), int(match.group("line"))
+        return self.file_path, None
 
     @staticmethod
-    def _safe_sudoers_d_line(file_path: str, line_number: int) -> bool:
-        path = Path(file_path)
-        if "sudoers.d" not in path.parts or not path.exists() or not path.is_file():
-            return False
-        try:
-            lines = path.read_text(encoding="utf-8-sig").splitlines()
-        except OSError:
-            return False
-        if line_number < 1 or line_number > len(lines):
-            return False
-        text = lines[line_number - 1].strip()
-        return bool(text and not text.startswith("#"))
+    def _find_row(files: list[dict], path: str, line: int | None) -> dict | None:
+        if line is None:
+            return None
+        for file_data in files:
+            if str(file_data.get("file_path")) != path:
+                continue
+            for row in file_data.get("lines", []):
+                if int(row.get("line_number") or 0) == line:
+                    return row
+        return None
+
+    @staticmethod
+    def _included_file(path: str) -> bool:
+        candidate = Path(path)
+        return "sudoers.d" in candidate.parts and "." not in candidate.name and not candidate.name.endswith("~")

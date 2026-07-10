@@ -3,31 +3,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
-import shutil
-import subprocess
+
+from core.models import RepairLevel
+from utils.command import DEFAULT_TIMEOUT, CommandExecutor, CommandRunner
+
+_RUNNER = CommandRunner()
 
 
-DEFAULT_TIMEOUT = 5
-
-
-def run_command(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> dict | None:
-    if not shutil.which(args[0]):
-        return None
-    try:
-        result = subprocess.run(args, text=True, capture_output=True, check=False, timeout=timeout)
-        evidence = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
-        return {"returncode": result.returncode, "evidence": evidence, "command": " ".join(args), "timeout": False}
-    except subprocess.TimeoutExpired as exc:
-        evidence = f"Command timed out after {timeout}s: {' '.join(args)}"
-        if exc.stdout:
-            evidence += f"\n{str(exc.stdout).strip()}"
-        if exc.stderr:
-            evidence += f"\n{str(exc.stderr).strip()}"
-        return {"returncode": 124, "evidence": evidence, "command": " ".join(args), "timeout": True}
-    except OSError as exc:
-        evidence = f"Could not run command {' '.join(args)}: {exc}"
-        return {"returncode": 126, "evidence": evidence, "command": " ".join(args), "timeout": False}
+def run_command(args: list[str], timeout: int = DEFAULT_TIMEOUT, runner: CommandExecutor | None = None) -> dict | None:
+    return (runner or _RUNNER).run(args, timeout)
 
 
 def issue(
@@ -45,15 +31,18 @@ def issue(
     risk_note: str | None = None,
     rollback_note: str | None = None,
 ) -> dict:
-    level = repair_level or ("safe" if fixes else "unsafe")
-    if level not in {"safe", "guarded", "unsafe"}:
-        level = "unsafe"
+    level = repair_level or (RepairLevel.SAFE.value if fixes else RepairLevel.REPORT_ONLY.value)
+    if level == "report-only":
+        level = RepairLevel.REPORT_ONLY.value
+    if level not in {item.value for item in RepairLevel}:
+        level = RepairLevel.REPORT_ONLY.value
     clean_fixes = fixes or []
-    if level == "unsafe":
+    if level == RepairLevel.REPORT_ONLY.value:
         clean_fixes = []
-    repairable = bool(clean_fixes) and level in {"safe", "guarded"}
+    repairable = bool(clean_fixes) and level in {RepairLevel.SAFE.value, RepairLevel.GUARDED.value}
+    identity = "\0".join((service or "", code, file_path, str(line_number or 0), evidence or ""))
     return {
-        "id": code,
+        "id": hashlib.sha256(identity.encode("utf-8", errors="replace")).hexdigest()[:20],
         "code": code,
         "severity": severity,
         "service": service,

@@ -7,8 +7,9 @@ import argparse
 import sys
 import textwrap
 from difflib import get_close_matches
-from functools import partial
+from typing import NoReturn
 
+from core.models import ExitCode
 from utils.ui import UI
 
 
@@ -39,7 +40,7 @@ class LixetArgumentParser(argparse.ArgumentParser):
             text = text.replace(old, new)
         return text
 
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         if message.startswith("unrecognized arguments:"):
             unknown = message.split(":", 1)[1].strip().split()[0]
             suggestion = get_close_matches(unknown, ["--version", "--update", "--no-color"], n=1)
@@ -55,7 +56,12 @@ class LixetArgumentParser(argparse.ArgumentParser):
 
 def parse_and_execute(args: list[str]) -> int:
     no_color = "--no-color" in args
-    common = argparse.ArgumentParser(add_help=False)
+
+    class Subparser(LixetArgumentParser):
+        def __init__(self, *sub_args, **sub_kwargs) -> None:
+            super().__init__(*sub_args, no_color=no_color, **sub_kwargs)
+
+    common = Subparser(add_help=False)
     common.add_argument("--no-color", action="store_true", default=argparse.SUPPRESS, help="Disable colored output")
     parser = LixetArgumentParser(
         prog="lixet",
@@ -76,6 +82,7 @@ def parse_and_execute(args: list[str]) -> int:
               lixet scan <service> -y        Apply all supported safe repairs
               lixet doctor                   Scan all supported services
               lixet doctor --dry-run         Preview all supported repairs
+              lixet doctor -y                Apply proven safe repairs without prompting
               lixet --no-color ...           Disable colored output
 
             Supported services:
@@ -84,7 +91,7 @@ def parse_and_execute(args: list[str]) -> int:
     )
     parser.add_argument("--update", action="store_true", help="Update the installed Lixet version")
     parser.add_argument("--version", action="store_true", help="Show installed and latest Lixet version")
-    subparsers = parser.add_subparsers(dest="command", parser_class=partial(LixetArgumentParser, no_color=no_color))
+    subparsers = parser.add_subparsers(dest="command", parser_class=Subparser)
 
     scan_parser = subparsers.add_parser("scan", parents=[common], help="Analyze a specific service")
     scan_parser.add_argument("service", help="Service to scan, e.g. ssh")
@@ -93,7 +100,6 @@ def parse_and_execute(args: list[str]) -> int:
     scan_parser.add_argument("-y", "--yes", action="store_true", help="Apply supported repairs without prompting")
 
     doctor_parser = subparsers.add_parser("doctor", parents=[common], help="Run all supported service checks")
-    doctor_parser.add_argument("--config", help="Override service configuration path for supported checks")
     doctor_parser.add_argument("--dry-run", action="store_true", help="Preview repairs without modifying files")
     doctor_parser.add_argument("-y", "--yes", action="store_true", help="Apply supported repairs without prompting")
 
@@ -107,11 +113,15 @@ def parse_and_execute(args: list[str]) -> int:
     if parsed_args.update:
         from core.updater import LixetUpdater
 
-        return 0 if LixetUpdater(no_color=getattr(parsed_args, "no_color", False)).run() else 1
+        return int(LixetUpdater(no_color=getattr(parsed_args, "no_color", False)).run())
     if parsed_args.version:
         from core.version import VersionReporter
 
-        return 0 if VersionReporter(no_color=getattr(parsed_args, "no_color", False)).run() else 1
+        return int(
+            ExitCode.OK
+            if VersionReporter(no_color=getattr(parsed_args, "no_color", False)).run()
+            else ExitCode.INSPECTION_FAILED
+        )
 
     if not parsed_args.command:
         parser.print_help()
@@ -126,9 +136,7 @@ def parse_and_execute(args: list[str]) -> int:
         no_color=getattr(parsed_args, "no_color", False),
     )
     if parsed_args.command == "scan":
-        ok = engine.scan_service(parsed_args.service)
-    elif parsed_args.command == "doctor":
-        ok = engine.run_doctor()
-    else:
-        ok = engine.show_services()
-    return 0 if ok else 1
+        return int(engine.scan_service(parsed_args.service))
+    if parsed_args.command == "doctor":
+        return int(engine.run_doctor())
+    return int(engine.show_services())

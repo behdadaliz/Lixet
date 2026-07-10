@@ -18,6 +18,18 @@ def main() -> int:
 
     try:
         return parse_and_execute(sys.argv[1:])
+    except EOFError:
+        from core.models import ExitCode
+        from utils.ui import UI
+
+        UI().status("info", "Input ended before an operation was approved.")
+        return int(ExitCode.ISSUES)
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        except OSError:
+            pass
+        return 0
     except KeyboardInterrupt:
         from utils.ui import UI
 

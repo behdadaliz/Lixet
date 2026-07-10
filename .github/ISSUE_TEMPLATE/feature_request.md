@@ -20,7 +20,7 @@ lixet ...
 
 ## Expected behavior
 
-What should Lixet do differently?
+What should Lixet do differently? Separate the desired diagnostic output from any requested file change.
 
 ## Why this is useful
 
@@ -32,7 +32,9 @@ What other tools, commands, scripts, or manual steps have you tried?
 
 ## Safety considerations
 
-If this feature would read or modify configuration files, describe the risks. Should it be diagnostic only, `safe`, `guarded`, or `unsafe`?
+If this feature would read or modify configuration files, describe the risks, authoritative verifier, rollback plan, and files involved. Should it be report-only, `safe`, or `guarded`? Explain why.
+
+Would the feature restart a service, change firewall rules, mount a filesystem, apply sysctl values, choose a DNS provider, or alter authentication/access policy? Lixet does not currently automate those operations.
 
 ## Additional context
 

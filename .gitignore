@@ -2,7 +2,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
 .coverage
+coverage.xml
 htmlcov/
 .venv/
 venv/
@@ -16,9 +20,9 @@ dist/
 .env.*
 .idea/
 .vscode/
+.agents/
 .DS_Store
 Thumbs.db
 *.log
 docker/
-tests/
 developer/

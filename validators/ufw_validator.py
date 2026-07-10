@@ -1,5 +1,5 @@
 # GitHub: https://github.com/behdadaliz/Lixet.git | Author: behdadaliz
-"""Deterministic UFW configuration validator."""
+"""Read-only UFW policy and runtime diagnostics."""
 
 from __future__ import annotations
 
@@ -9,112 +9,134 @@ from validators.helpers import issue
 
 
 class UFWValidator:
-    POLICIES = {
-        "DEFAULT_INPUT_POLICY": "DROP",
-        "DEFAULT_OUTPUT_POLICY": "ACCEPT",
-        "DEFAULT_FORWARD_POLICY": "DROP",
-    }
+    POLICIES = {"DEFAULT_INPUT_POLICY", "DEFAULT_OUTPUT_POLICY", "DEFAULT_FORWARD_POLICY"}
 
     def __init__(self, file_path: str = "/etc/ufw/ufw.conf") -> None:
         self.file_path = file_path
 
     def run_rules(self, data: dict) -> list[dict]:
-        rows = data["lines"]
         issues: list[dict] = []
-        self._check_runtime_status(data, issues)
+        self._runtime(data.get("ufw_status"), issues)
+        files = data.get("files") or [{"file_path": self.file_path, "role": "state", "lines": data.get("lines", [])}]
         if data.get("missing_config"):
-            if not any(item.get("code") == "UFW_NOT_INSTALLED" for item in issues):
-                issues.append(issue(
-                    "UFW_CONFIG_NOT_FOUND",
-                    "medium",
-                    "UFW configuration file was not found.",
-                    self.file_path,
-                    [],
-                    None,
-                    "ufw",
-                    "The configured ufw.conf path does not exist.",
-                    "No automatic firewall repair is applied.",
-                ))
+            if not any(item["code"] == "UFW_NOT_INSTALLED" for item in issues):
+                issues.append(self._make("UFW_CONFIG_NOT_FOUND", "medium", "UFW state configuration was not found."))
             return issues
-        self._check_bool(rows, issues, "ENABLED", "no", required=True)
-        self._check_bool(rows, issues, "IPV6", "yes", required=False)
-        self._check_policies(rows, issues)
+        for file_data in files:
+            role = file_data.get("role")
+            rows = file_data.get("lines", [])
+            path = str(file_data.get("file_path") or self.file_path)
+            if role == "state":
+                self._setting(rows, path, "ENABLED", {"yes", "no"}, issues)
+            elif role == "defaults":
+                self._setting(rows, path, "IPV6", {"yes", "no"}, issues)
+                for key in sorted(self.POLICIES):
+                    self._setting(rows, path, key, {"ACCEPT", "DROP", "REJECT"}, issues, upper=True)
         return issues
 
-    def _issue(
+    def _make(
         self,
         code: str,
         severity: str,
-        desc: str,
-        fixes: list[dict] | None = None,
-        line: int | None = None,
-        repair_level: str | None = None,
-        risk_note: str | None = None,
+        description: str,
+        row: dict | None = None,
+        path: str | None = None,
+        evidence: str | None = None,
+        command: str | None = None,
     ) -> dict:
-        return issue(code, severity, desc, self.file_path, fixes, line, "ufw", None, None, None, repair_level, risk_note)
+        return issue(
+            code,
+            severity,
+            description,
+            path or (str(row.get("file_path")) if row else self.file_path),
+            [],
+            int(row["line_number"]) if row else None,
+            "ufw",
+            evidence,
+            "UFW startup, IPv6, policy, and rule changes are report-only.",
+            command,
+            "unsafe",
+        )
 
-    def _check_runtime_status(self, data: dict, issues: list[dict]) -> None:
-        status = data.get("ufw_status")
-        if not status:
-            issues.append(self._issue("UFW_NOT_INSTALLED", "info", "ufw command is not available on this system.", repair_level="unsafe"))
+    def _runtime(self, result: dict | None, issues: list[dict]) -> None:
+        if not result:
+            issues.append(
+                self._make("UFW_NOT_INSTALLED", "info", "ufw is unavailable; runtime firewall checks were not run.")
+            )
             return
-        evidence = status.get("evidence", "")
-        if status["returncode"] != 0:
-            issues.append(issue("UFW_STATUS_FAILED", "low", "Could not read UFW runtime status.", self.file_path, [], None, "ufw", evidence, "No safe automatic repair available.", status.get("command"), "unsafe"))
-            return
-        low = evidence.lower()
-        if "status: inactive" in low:
-            issues.append(issue("UFW_INACTIVE", "info", "UFW is inactive. No repair needed unless you intend to enable the firewall.", self.file_path, [], None, "ufw", evidence, "No repair needed unless you intend to enable the firewall.", status.get("command"), "unsafe"))
-            return
-        if "status: active" in low and not self._ssh_allowed(low):
-            issues.append(issue("UFW_SSH_NOT_ALLOWED", "high", "UFW is active, but no obvious SSH allow rule was found.", self.file_path, [], None, "ufw", evidence, "Firewall changes can affect remote access. Add an SSH allow rule manually after review.", status.get("command"), "unsafe", "Automatic firewall command repairs are intentionally disabled because they are not safely reversible."))
+        evidence = str(result.get("evidence") or "")
+        if result.get("returncode") != 0:
+            issues.append(
+                self._make(
+                    "UFW_STATUS_FAILED",
+                    "low",
+                    "Could not read UFW runtime status.",
+                    evidence=evidence,
+                    command=result.get("command"),
+                )
+            )
+        elif "status: inactive" in evidence.lower():
+            issues.append(
+                self._make(
+                    "UFW_INACTIVE",
+                    "info",
+                    "UFW is inactive; enabling a firewall is an administrator policy decision.",
+                    evidence=evidence,
+                    command=result.get("command"),
+                )
+            )
+        elif "status: active" in evidence.lower() and not re.search(
+            r"\bopenssh\b|\b22/tcp\b|(^|\s)22(\s|/)", evidence, re.I | re.M
+        ):
+            issues.append(
+                self._make(
+                    "UFW_SSH_NOT_ALLOWED",
+                    "high",
+                    "UFW is active, but no obvious SSH allow rule was found.",
+                    evidence=evidence,
+                    command=result.get("command"),
+                )
+            )
 
-    @staticmethod
-    def _ssh_allowed(text: str) -> bool:
-        return bool(re.search(r"\bopenssh\b|\b22/tcp\b|(^|\s)22(\s|/)", text, re.IGNORECASE | re.MULTILINE))
-
-    def _items(self, rows: list[dict], key: str) -> list[dict]:
-        out = []
+    def _setting(
+        self, rows: list[dict], path: str, key: str, valid: set[str], issues: list[dict], upper: bool = False
+    ) -> None:
+        items = []
         for row in rows:
-            if not row["is_active"] or "=" not in row["text"]:
+            text = str(row.get("text") or "")
+            if not row.get("is_active") or "=" not in text:
                 continue
-            name, val = row["text"].split("=", 1)
+            name, value = text.split("=", 1)
             if name.strip() == key:
-                out.append({**row, "value": val.strip().strip('"').strip("'")})
-        return out
-
-    def _check_bool(self, rows: list[dict], issues: list[dict], key: str, default: str, required: bool) -> None:
-        items = self._items(rows, key)
-        if required and not items:
-            level = "guarded" if key == "ENABLED" else "safe"
-            issues.append(self._issue(f"UFW_MISSING_{key}", "medium", f"Missing {key}; defaulting to {default}.", [{"action": "append", "content": f"{key}={default}"}], repair_level=level, risk_note="Changing ENABLED can affect firewall startup behavior." if level == "guarded" else None))
+                items.append({**row, "value": value.strip().strip("'\"")})
+        if not items:
+            issues.append(
+                self._make(
+                    f"UFW_MISSING_{key}", "low", f"{key} is not explicitly configured in its expected file.", path=path
+                )
+            )
             return
-        for dup in items[1:]:
-            issues.append(self._issue(f"UFW_DUPLICATE_{key}", "low", f"Duplicate {key} setting.", [{"action": "comment_out_with_reason", "line_number": dup["line_number"], "reason": "Lixet disabled duplicate UFW setting"}], dup["line_number"], repair_level="safe"))
-        for item in items[:1]:
-            if item["value"].lower() not in {"yes", "no"}:
-                level = "guarded" if key == "ENABLED" else "safe"
-                issues.append(self._issue(
+        normalized = (lambda value: value.upper()) if upper else (lambda value: value.lower())
+        effective = items[-1]
+        if normalized(str(effective["value"])) not in valid:
+            issues.append(
+                self._make(
                     f"UFW_INVALID_{key}",
                     "medium",
-                    f"Invalid {key} value '{item['value']}'. Expected yes or no.",
-                    [{"action": "replace", "line_number": item["line_number"], "content": f"{key}={default}"}],
-                    item["line_number"],
-                    repair_level=level,
-                    risk_note="Changing ENABLED can affect firewall startup behavior." if level == "guarded" else None,
-                ))
-
-    def _check_policies(self, rows: list[dict], issues: list[dict]) -> None:
-        valid = {"ACCEPT", "DROP", "REJECT"}
-        for key, default in self.POLICIES.items():
-            for item in self._items(rows, key)[:1]:
-                value = item["value"].upper()
-                if value not in valid:
-                    issues.append(self._issue(
-                        f"UFW_INVALID_{key}",
-                        "medium",
-                        f"Invalid {key} value '{item['value']}'.",
-                        [{"action": "replace", "line_number": item["line_number"], "content": f'{key}="{default}"'}],
-                        item["line_number"],
-                        repair_level="safe",
-                    ))
+                    f"Effective {key} value '{effective['value']}' is invalid.",
+                    effective,
+                    path,
+                )
+            )
+        if len(items) > 1:
+            evidence = "\n".join(f"{path}:{item['line_number']}: {item['value']}" for item in items)
+            issues.append(
+                self._make(
+                    f"UFW_DUPLICATE_{key}",
+                    "low",
+                    f"{key} is assigned multiple times; the last assignment is effective and is preserved.",
+                    effective,
+                    path,
+                    evidence,
+                )
+            )
