@@ -20,11 +20,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev]"
       - run: python -m compileall -q backup cli core repair services utils validators install.py main.py
-      - run: python -m pytest
+      - run: python -B -m unittest discover -s tests
 
   quality:
     runs-on: ubuntu-latest
@@ -51,9 +48,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update
-      - run: sudo apt-get install --yes shellcheck
-      - run: shellcheck install.sh uninstall.sh
+      - uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: "."
+          format: gcc
+          severity: warning
 
   distribution-fixtures:
     runs-on: ubuntu-latest
