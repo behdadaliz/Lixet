@@ -85,14 +85,14 @@ Coverage must remain at or above the configured threshold. Raising raw coverage 
 
 Installer and updater changes require phase failure injection. Never test them against real install paths.
 
-The updater accepts only versioned GitHub Release assets:
+The updater uses GitHub's automatic source archive for the selected published Release. Maintainers do not need to upload custom release files. The release tag and canonical `VERSION` content must agree under SemVer normalization. Do not add mutable branch fallback or silent downgrade behavior.
 
-```text
-lixet-<version>.zip
-lixet-<version>.zip.sha256
-```
+Release flow:
 
-`SHA256SUMS` is also accepted as the checksum asset, but it must contain an entry for the exact release archive name. The release tag, archive filename, and canonical `VERSION` content must agree under SemVer normalization. Do not add mutable branch fallback or silent downgrade behavior.
+1. Update `VERSION`.
+2. Commit and push the release code.
+3. Create a GitHub tag such as `v0.2.3-beta`.
+4. Create and publish a GitHub Release from that tag.
 
 Do not bump `VERSION` repeatedly. Update it once after the full quality gate passes, then update `README.md`, `ARCHITECTURE.md`, and `CONTRIBUTING.md` if the behavior changed. Publishing a GitHub release is a separate maintainer action.
 

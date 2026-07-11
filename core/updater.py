@@ -1,10 +1,9 @@
 # GitHub: https://github.com/behdadaliz/Lixet.git | Author: behdadaliz
-"""Release-only, checksum-verified self updates."""
+"""Release-only self updates from GitHub source archives."""
 
 from __future__ import annotations
 
 import compileall
-import hashlib
 import importlib
 import json
 import os
@@ -21,7 +20,7 @@ from typing import BinaryIO
 
 from core.install_transaction import InstallError, InstallRollbackError, InstallTransaction
 from core.models import ExitCode
-from core.version import SemVer, read_installed_version, select_latest_release, version_key
+from core.version import SemVer, display_version, read_installed_version, select_latest_release, version_key
 from utils.ui import UI
 
 
@@ -39,7 +38,6 @@ class LixetUpdater:
     LOCK_PATH = Path("/run/lock/lixet/update.lock")
     RELEASES_URL = "https://api.github.com/repos/behdadaliz/Lixet/releases?per_page=50"
     MAX_METADATA = 1024 * 1024
-    MAX_CHECKSUM = 4096
     MAX_DOWNLOAD = 20 * 1024 * 1024
     MAX_ENTRIES = 512
     MAX_FILE_SIZE = 2 * 1024 * 1024
@@ -78,10 +76,14 @@ class LixetUpdater:
             with _UpdateLock(self.lock_path):
                 with tempfile.TemporaryDirectory(prefix="lixet-update-") as tmp:
                     tmp_path = Path(tmp)
+                    self.ui.status("info", "Checking latest available release...")
                     archive, target = self._download(tmp_path)
+                    self.ui.status("info", "Validating downloaded source...")
                     source = self._extract(archive, tmp_path)
                     self._validate_source(source, target)
                     self._self_test(source)
+                    self.ui.status("ok", "Source validation passed.")
+                    self.ui.status("info", "Installing updated version...")
                     InstallTransaction(source, self.install_dir, self.bin_path).install()
         except UpdateNotNeeded as exc:
             self.ui.status("ok", str(exc))
@@ -94,7 +96,7 @@ class LixetUpdater:
             return ExitCode.REPAIR_FAILED
 
         self.ui.status("ok", "Lixet updated successfully.")
-        self.ui.kv("Installed", read_installed_version(self.install_dir))
+        self.ui.kv("Installed version", display_version(read_installed_version(self.install_dir)))
         return ExitCode.OK
 
     def _download(self, tmp_path: Path) -> tuple[Path, SemVer]:
@@ -115,42 +117,20 @@ class LixetUpdater:
         target = version_key(str(release["version"]))
         if target is None:
             raise UpdateError("Release tag is not valid Semantic Versioning.")
+        display = str(release.get("tag") or display_version(str(target)))
         if target == installed:
-            raise UpdateNotNeeded(f"Lixet {installed} is already installed.")
+            raise UpdateNotNeeded(f"Lixet {display} is already installed.")
         if target < installed and not self.force:
             raise UpdateError(f"Refusing downgrade from {installed} to {target}.")
 
-        archive_asset, checksum_asset = self._release_assets(release, target)
-        checksum_text = self._download_bytes(str(checksum_asset["browser_download_url"]), self.MAX_CHECKSUM, timeout=20)
-        expected = self._parse_checksum(
-            checksum_text.decode("ascii", errors="strict"),
-            str(archive_asset["name"]),
-        )
-        archive = tmp_path / f"lixet-{target}.zip"
-        self._download_file(str(archive_asset["browser_download_url"]), archive, self.MAX_DOWNLOAD, timeout=30)
-        actual = self._hash_file(archive)
-        if actual != expected:
-            raise UpdateError("Release archive checksum mismatch.")
+        url = str(release.get("zipball_url") or "")
+        if not url:
+            raise UpdateError("GitHub did not provide a source archive for this release.")
+        self.ui.status("info", f"Downloading {display}...")
+        archive = tmp_path / f"github-source-{target}.zip"
+        self._download_file(url, archive, self.MAX_DOWNLOAD, timeout=30)
+        self.ui.status("ok", "Download complete.")
         return archive, target
-
-    def _release_assets(self, release: dict, version: SemVer) -> tuple[dict, dict]:
-        archive_name = f"lixet-{version}.zip".lower()
-        checksum_names = {f"{archive_name}.sha256", "sha256sums"}
-        archive = None
-        checksum = None
-        for asset in release.get("assets", []):
-            if not isinstance(asset, dict):
-                continue
-            name = str(asset.get("name") or "").lower()
-            if name == archive_name:
-                archive = asset
-            elif name in checksum_names:
-                checksum = asset
-        if not archive or not checksum:
-            raise UpdateError(f"Release must provide {archive_name} and a SHA-256 checksum asset.")
-        if not archive.get("browser_download_url") or not checksum.get("browser_download_url"):
-            raise UpdateError("Release asset download URL is missing.")
-        return archive, checksum
 
     def _fetch_json(self, url: str, limit: int, timeout: int) -> object:
         data = self._download_bytes(url, limit, timeout)
@@ -268,49 +248,12 @@ class LixetUpdater:
             raise UpdateError(f"Archive contains a symlink or special file: {name}")
         return relative, "file"
 
-    @staticmethod
-    def _parse_checksum(text: str, archive_name: str | None = None) -> str:
-        bare: list[str] = []
-        matches: list[str] = []
-        for line in text.splitlines():
-            parts = line.strip().split()
-            if not parts:
-                continue
-            token = parts[0]
-            if len(token) != 64 or any(char not in "0123456789abcdefABCDEF" for char in token):
-                raise UpdateError("Checksum asset does not contain a valid SHA-256 digest.")
-            digest = token.lower()
-            if len(parts) == 1:
-                bare.append(digest)
-                continue
-            if archive_name is None:
-                continue
-            name = parts[-1].lstrip("*")
-            if name == archive_name:
-                matches.append(digest)
-
-        if archive_name is not None and matches:
-            if len(set(matches)) != 1 or len(matches) > 1:
-                raise UpdateError("Checksum asset contains duplicate entries for the release archive.")
-            return matches[0]
-        if len(bare) == 1:
-            return bare[0]
-        raise UpdateError("Checksum asset does not contain a checksum for the release archive.")
-
-    @staticmethod
-    def _hash_file(path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(64 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
-
     def _validate_source(self, source: Path, target: SemVer) -> None:
         InstallTransaction._validate_tree(source)
         raw = (source / "VERSION").read_text(encoding="utf-8").strip()
         parsed = version_key(raw)
         if parsed != target:
-            raise UpdateError(f"VERSION '{raw}' does not match release tag '{target}'.")
+            raise UpdateError("Downloaded VERSION does not match the GitHub Release tag.")
 
     @staticmethod
     def _self_test(source: Path) -> None:

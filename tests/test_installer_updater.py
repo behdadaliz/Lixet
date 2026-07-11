@@ -199,28 +199,24 @@ class UpdaterTests(unittest.TestCase):
             with self.assertRaises(UpdateError):
                 updater._download_latest_release(root)
 
-    def test_release_requires_versioned_archive_and_checksum(self) -> None:
+    def test_release_requires_github_source_archive_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            updater = self._updater(Path(tmp))
-            release = {"assets": [{"name": "source.zip", "browser_download_url": "https://example.invalid/source"}]}
+            root = Path(tmp)
+            release = [{"tag_name": "v0.2.0-beta.1", "name": "newer"}]
+            updater = self._updater(root, opener=lambda *_args, **_kwargs: FakeResponse(json.dumps(release).encode()))
             with self.assertRaises(UpdateError):
-                updater._release_assets(release, parse_version("0.2.0-beta.1"))
+                updater._download_latest_release(root)
 
-    def test_checksum_mismatch_is_rejected(self) -> None:
+    def test_release_source_archive_is_downloaded_from_zipball_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             version = "0.2.0-beta.1"
+            archive = b"release source archive"
             release = [
                 {
                     "tag_name": "v" + version,
                     "name": version,
-                    "assets": [
-                        {"name": f"lixet-{version}.zip", "browser_download_url": "https://example.invalid/archive"},
-                        {
-                            "name": f"lixet-{version}.zip.sha256",
-                            "browser_download_url": "https://example.invalid/checksum",
-                        },
-                    ],
+                    "zipball_url": "https://example.invalid/source.zip",
                 }
             ]
 
@@ -228,30 +224,13 @@ class UpdaterTests(unittest.TestCase):
                 url = request.full_url
                 if "releases" in url:
                     return FakeResponse(json.dumps(release).encode())
-                if "checksum" in url:
-                    return FakeResponse(("0" * 64).encode())
-                return FakeResponse(b"not-the-declared-archive")
+                self.assertEqual(url, "https://example.invalid/source.zip")
+                return FakeResponse(archive)
 
             updater = self._updater(root, opener)
-            with self.assertRaises(UpdateError):
-                updater._download_latest_release(root)
-
-    def test_sha256sums_selects_the_release_archive_entry(self) -> None:
-        expected = "1" * 64
-        other = "2" * 64
-        text = f"{other}  unrelated.zip\n{expected}  lixet-0.2.0-beta.1.zip\n"
-        self.assertEqual(
-            LixetUpdater._parse_checksum(text, "lixet-0.2.0-beta.1.zip"),
-            expected,
-        )
-
-    def test_sha256sums_rejects_missing_or_duplicate_archive_entry(self) -> None:
-        with self.assertRaises(UpdateError):
-            LixetUpdater._parse_checksum("1" * 64 + "  other.zip\n", "lixet-0.2.0-beta.1.zip")
-
-        text = f"{'1' * 64}  lixet-0.2.0-beta.1.zip\n{'2' * 64}  lixet-0.2.0-beta.1.zip\n"
-        with self.assertRaises(UpdateError):
-            LixetUpdater._parse_checksum(text, "lixet-0.2.0-beta.1.zip")
+            path, target = updater._download_latest_release(root)
+            self.assertEqual(path.read_bytes(), archive)
+            self.assertEqual(target, parse_version(version))
 
     def test_download_size_limit_is_enforced_and_partial_file_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

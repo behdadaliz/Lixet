@@ -136,7 +136,7 @@ Other commands such as `ufw`, `ip`, `systemctl`, and `resolvectl` provide read-o
 
 `InstallTransaction` is shared by `install.py` and the updater. It validates exact required file types, writes an ownership marker, stages into a unique directory, preserves the previous installation and command entry, and restores both after failures. It removes only staging and backup paths created by its transaction.
 
-The updater selects a newer GitHub Release from the installed stable or prerelease channel. It has no branch fallback. A release must provide `lixet-<version>.zip` and a SHA-256 asset. Downloads and extraction are bounded; path traversal, duplicate paths, symlinks, special files, oversized content, mismatched versions, same-version reinstalls, and downgrades are rejected. Staging receives compile and CLI smoke checks before the install transaction begins.
+The updater selects a newer published GitHub Release from the installed stable or prerelease channel. It has no branch fallback. It downloads GitHub's automatic `zipball_url` source archive, extracts it into a temporary directory, validates paths and file types, checks that `VERSION` matches the release tag after SemVer normalization, then runs compile and CLI smoke checks before the install transaction begins. Downloads and extraction are bounded; path traversal, duplicate paths, symlinks, special files, oversized content, mismatched versions, same-version reinstalls, and downgrades are rejected.
 
 ## Non-Goals
 

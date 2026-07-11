@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import io
 import json
 import stat
@@ -245,31 +244,23 @@ class UpdaterContractTests(unittest.TestCase):
             ):
                 self.assertEqual(updater.run(), ExitCode.REPAIR_FAILED)
 
-    def test_complete_checksum_verified_download(self) -> None:
+    def test_complete_release_source_zip_download(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             updater = self._updater(root)
             version = "0.2.0-beta.2"
-            archive = b"verified archive"
-            digest = hashlib.sha256(archive).hexdigest()
+            archive = b"release source archive"
             release = [
                 {
                     "tag_name": "v" + version,
-                    "assets": [
-                        {"name": f"lixet-{version}.zip", "browser_download_url": "https://example.test/archive"},
-                        {
-                            "name": f"lixet-{version}.zip.sha256",
-                            "browser_download_url": "https://example.test/checksum",
-                        },
-                    ],
+                    "zipball_url": "https://example.test/source.zip",
                 }
             ]
 
             def opener(request, **_kwargs):
                 if "releases" in request.full_url:
                     return FakeResponse(json.dumps(release).encode())
-                if "checksum" in request.full_url:
-                    return FakeResponse((digest + f"  lixet-{version}.zip\n").encode())
+                self.assertEqual(request.full_url, "https://example.test/source.zip")
                 return FakeResponse(archive)
 
             updater.opener = opener
@@ -292,15 +283,7 @@ class UpdaterContractTests(unittest.TestCase):
             with self.assertRaises(UpdateError):
                 updater._fetch_json("https://example.test", 10, 1)
             with self.assertRaises(UpdateError):
-                updater._parse_checksum("xyz")
-            release = {
-                "assets": [
-                    {"name": "lixet-1.0.0.zip", "browser_download_url": ""},
-                    {"name": "sha256sums", "browser_download_url": ""},
-                ]
-            }
-            with self.assertRaises(UpdateError):
-                updater._release_assets(release, semver("1.0.0"))
+                updater._download_latest_release(root)
 
     def test_archive_extracts_root_and_rejects_duplicates_or_missing_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -327,7 +310,7 @@ class UpdaterContractTests(unittest.TestCase):
             with self.assertRaises(UpdateError):
                 updater._extract(missing, root / "missing-work")
 
-    def test_archive_entry_types_hash_and_self_test_failures(self) -> None:
+    def test_archive_entry_types_and_self_test_failures(self) -> None:
         directory = zipfile.ZipInfo("root/")
         directory.create_system = 3
         directory.external_attr = (stat.S_IFDIR | 0o755) << 16
@@ -339,9 +322,6 @@ class UpdaterContractTests(unittest.TestCase):
             LixetUpdater._validate_entry(bad_directory)
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "data"
-            path.write_bytes(b"abc")
-            self.assertEqual(LixetUpdater._hash_file(path), hashlib.sha256(b"abc").hexdigest())
             with mock.patch("core.updater.compileall.compile_dir", return_value=False), self.assertRaises(UpdateError):
                 LixetUpdater._self_test(Path(tmp))
             failed = SimpleNamespace(returncode=1, stderr=b"failed")
