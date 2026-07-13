@@ -238,34 +238,10 @@ class UpdaterTests(unittest.TestCase):
             with self.assertRaises(UpdateError):
                 updater._download_latest_release(root)
 
-<<<<<<< HEAD
-<<<<<<< HEAD
     def test_release_source_archive_is_downloaded_from_zipball_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             version = "0.3.0-beta"
-=======
-    def test_release_requires_github_source_archive_url(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-=======
-    def test_release_requires_github_source_archive_url(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
->>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
-            release = [{"tag_name": "v0.2.0-beta.1", "name": "newer"}]
-            updater = self._updater(root, opener=lambda *_args, **_kwargs: FakeResponse(json.dumps(release).encode()))
-            with self.assertRaises(UpdateError):
-                updater._download_latest_release(root)
-
-    def test_release_source_archive_is_downloaded_from_zipball_url(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            version = "0.2.0-beta.1"
-<<<<<<< HEAD
->>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
-=======
->>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
             archive = b"release source archive"
             release = [
                 {
