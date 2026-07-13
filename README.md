@@ -15,7 +15,9 @@ It reads known system configuration files, runs local validation commands when a
 - Apply only narrow deterministic repairs.
 - Keep guarded repairs behind explicit interactive confirmation.
 - List protected backups and restore one safely.
+- Save a plain-text Doctor log after every `doctor` run.
 - Update an installed copy from published GitHub Releases.
+- Uninstall installed Lixet files while preserving backups.
 
 Many findings are report-only because the correct action depends on administrator intent.
 
@@ -51,6 +53,7 @@ lixet doctor
 lixet services
 lixet backups
 lixet restore <backup-id>
+sudo lixet uninstall
 ```
 
 Preview repairs without writing:
@@ -108,6 +111,14 @@ q
 
 Report-only findings are explained and skipped. `r` rescans. `q` exits safely.
 
+Every completed Doctor run writes a plain-text log. The default path is:
+
+```text
+/var/log/lixet/doctor-YYYYMMDD-HHMMSS.log
+```
+
+If that directory is not writable, Lixet tries a safe state-directory fallback. Doctor logs are redacted, do not include ANSI color codes, and are rotated by keeping the newest 20 logs.
+
 ## Backups And Restore
 
 List protected backups:
@@ -147,7 +158,7 @@ Run `lixet services` for the live registry. This release supports:
 | `fstab` | - | `/etc/fstab` |
 | `sysctl` | - | `/etc/sysctl.conf` |
 
-Fail2ban support is conservative: Lixet inspects includes, jails, filters, runtime status, and `fail2ban-client -t` output, but it does not restart Fail2ban, change firewall rules, or rewrite ban policy.
+Fail2ban support is conservative: Lixet follows active roots and local overrides, uses `fail2ban-client -t` when available, and does not treat unused stock filter libraries as active broken configuration.
 
 ## Safety
 
@@ -157,6 +168,7 @@ Fail2ban support is conservative: Lixet inspects includes, jails, filters, runti
 - Diffs are shown before confirmation.
 - Backups are created before writes.
 - Lixet does not restart services, change firewall rules, mount filesystems, or apply sysctl values.
+- Normal system state such as inactive UFW, managed DNS, and valid sysctl overrides is not treated as breakage.
 - Normal scans do not require internet access.
 - `--version` and `--update` contact GitHub Releases.
 
@@ -172,8 +184,11 @@ The updater follows the installed release channel and installs the latest compat
 ## Uninstall
 
 ```bash
+sudo lixet uninstall
 sudo sh uninstall.sh
 ```
+
+Uninstall removes Lixet-owned installed files, logs, locks, and runtime cache, but preserves protected backups under `/var/lib/lixet/backups`.
 
 ## Current Limitations
 

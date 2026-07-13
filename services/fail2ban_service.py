@@ -56,8 +56,8 @@ class Fail2banService:
                 found.append(path)
         for directory, patterns in (
             ("jail.d", ("*.conf", "*.local")),
-            ("filter.d", ("*.conf",)),
-            ("action.d", ("*.conf",)),
+            ("filter.d", ("*.local",)),
+            ("action.d", ("*.local",)),
         ):
             root = config_dir / directory
             if not root.is_dir():

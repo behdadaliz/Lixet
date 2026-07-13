@@ -128,8 +128,7 @@ class ReleaseBlockerBaselineTests(unittest.TestCase):
             ]
         }
         issues = SysctlValidator("/tmp/sysctl.conf").run_rules(data)
-        duplicate = next(item for item in issues if item["code"] == "SYSCTL_EFFECTIVE_OVERRIDE")
-        self.assertFalse(duplicate["repairable"])
+        self.assertFalse(any(item["code"] == "SYSCTL_EFFECTIVE_OVERRIDE" for item in issues))
 
     def test_ufw_later_assignment_is_report_only(self) -> None:
         data = {
@@ -138,8 +137,7 @@ class ReleaseBlockerBaselineTests(unittest.TestCase):
             "ufw_status": None,
         }
         issues = UFWValidator("/tmp/ufw.conf").run_rules(data)
-        duplicate = next(item for item in issues if item["code"] == "UFW_DUPLICATE_ENABLED")
-        self.assertFalse(duplicate["repairable"])
+        self.assertFalse(any(item["code"] == "UFW_DUPLICATE_ENABLED" for item in issues))
 
     def test_concurrent_edit_aborts_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

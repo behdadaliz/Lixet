@@ -76,15 +76,7 @@ class UFWValidator:
                 )
             )
         elif "status: inactive" in evidence.lower():
-            issues.append(
-                self._make(
-                    "UFW_INACTIVE",
-                    "info",
-                    "UFW is inactive; enabling a firewall is an administrator policy decision.",
-                    evidence=evidence,
-                    command=result.get("command"),
-                )
-            )
+            return
         elif "status: active" in evidence.lower() and not re.search(
             r"\bopenssh\b|\b22/tcp\b|(^|\s)22(\s|/)", evidence, re.I | re.M
         ):
@@ -128,15 +120,4 @@ class UFWValidator:
                     path,
                 )
             )
-        if len(items) > 1:
-            evidence = "\n".join(f"{path}:{item['line_number']}: {item['value']}" for item in items)
-            issues.append(
-                self._make(
-                    f"UFW_DUPLICATE_{key}",
-                    "low",
-                    f"{key} is assigned multiple times; the last assignment is effective and is preserved.",
-                    effective,
-                    path,
-                    evidence,
-                )
-            )
+        return

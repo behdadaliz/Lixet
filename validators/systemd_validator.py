@@ -19,6 +19,11 @@ class SystemdValidator:
         issues: list[dict] = []
         self._check_runtime(data, issues)
         self._check_config_test(data, issues)
+        result = data.get("config_test")
+        if result and result.get("returncode") == 0:
+            return issues
+        if result and result.get("returncode") != 0:
+            return issues
         for unit in data.get("units", []):
             self._check_unit(unit, issues)
         return issues

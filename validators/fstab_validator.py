@@ -35,6 +35,9 @@ class FstabValidator:
                     command=verify.get("command"),
                 )
             )
+            return issues
+        else:
+            return issues
 
         seen_mounts: set[str] = set()
         for row in [item for item in data.get("lines", []) if item.get("is_active")]:

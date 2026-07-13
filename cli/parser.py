@@ -79,6 +79,7 @@ def parse_and_execute(args: list[str]) -> int:
               services    List supported services
               backups     List protected backups
               restore     Restore a protected backup
+              uninstall   Remove installed Lixet files while preserving backups
 
             Common examples:
               lixet scan ssh
@@ -87,6 +88,7 @@ def parse_and_execute(args: list[str]) -> int:
               lixet doctor
               lixet backups
               lixet restore <backup-id>
+              sudo lixet uninstall
               lixet --version
               sudo lixet --update
 
@@ -117,6 +119,9 @@ def parse_and_execute(args: list[str]) -> int:
     restore_parser.add_argument("backup_id", help="Backup ID to restore")
     restore_parser.add_argument("--dry-run", action="store_true", help="Preview restore without modifying files")
 
+    uninstall_parser = subparsers.add_parser("uninstall", parents=[common], help="Uninstall Lixet and preserve backups")
+    uninstall_parser.add_argument("--dry-run", action="store_true", help="Preview uninstall without removing files")
+
     if not args:
         parser.print_help()
         return 0
@@ -138,6 +143,16 @@ def parse_and_execute(args: list[str]) -> int:
     if not parsed_args.command:
         parser.print_help()
         return 0
+
+    if parsed_args.command == "uninstall":
+        from core.uninstaller import LixetUninstaller
+
+        return int(
+            LixetUninstaller(
+                dry_run=getattr(parsed_args, "dry_run", False),
+                no_color=getattr(parsed_args, "no_color", False),
+            ).run()
+        )
 
     from core.engine import LixetEngine
 

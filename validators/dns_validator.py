@@ -25,15 +25,9 @@ class DNSValidator:
             ]
         rows = data.get("lines", [])
         manager = data.get("resolver_manager") or ("managed resolver" if data.get("managed_resolver") else None)
-        if manager:
-            issues.append(
-                self._make(
-                    "DNS_MANAGED_RESOLVER",
-                    "info",
-                    f"resolv.conf is managed by {manager}; Lixet will not rewrite it.",
-                    evidence=self._link_evidence(data),
-                )
-            )
+        if manager and manager != "unsafe-symlink":
+            self._check_runtime(data, issues)
+            return issues
         if not any(row.get("is_active") for row in rows):
             issues.append(
                 self._make("DNS_EMPTY_RESOLV_CONF", "high", "resolv.conf has no active resolver configuration.")

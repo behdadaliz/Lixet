@@ -10,9 +10,10 @@ import sys
 from pathlib import Path
 
 from core.install_transaction import InstallError, InstallRollbackError, InstallTransaction
+from core.layout import DEFAULT_LAYOUT
 
-BIN_PATH = Path("/usr/local/bin/lixet")
-INSTALL_DIR = Path("/opt/lixet")
+BIN_PATH = DEFAULT_LAYOUT.bin_path
+INSTALL_DIR = DEFAULT_LAYOUT.install_dir
 
 
 def require_root() -> None:
