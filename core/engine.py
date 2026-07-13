@@ -6,32 +6,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from backup.manager import BackupManager, RollbackError
+from backup.manager import BackupError, BackupManager, RollbackError
+from core.detector import DetectionResult, DetectionStatus, TargetDetector
 from core.models import ExitCode, VerificationResult, VerificationState
+from core.registry import aliases, get_service, iter_services, resolve_service_name, service_names
 from repair.manager import RepairError, RepairManager
-from repair.snapshot import FileSnapshot, SnapshotError
+from repair.snapshot import FileSnapshot, SnapshotError, require_unchanged
 from repair.transaction import RepairPlan, RepairTransaction, TransactionError
-from services.dns_service import DNSService
-from services.fstab_service import FstabService
-from services.networking_service import NetworkingService
-from services.nginx_service import NginxService
-from services.ssh_service import SSHService
-from services.sudoers_service import SudoersService
-from services.sysctl_service import SysctlService
-from services.systemd_service import SystemdService
-from services.ufw_service import UFWService
 from utils.command import CommandExecutor, CommandRunner
+from utils.diff import DiffFile, render_diff, repaired_bytes
+from utils.selection import SelectionAction, parse_selection
 from utils.ui import UI
-from validators.dns_validator import DNSValidator
-from validators.fstab_validator import FstabValidator
 from validators.helpers import issue as make_issue
-from validators.networking_validator import NetworkingValidator
-from validators.nginx_validator import NginxValidator
-from validators.ssh_validator import SSHValidator
-from validators.sudoers_validator import SudoersValidator
-from validators.sysctl_validator import SysctlValidator
-from validators.systemd_validator import SystemdValidator
-from validators.ufw_validator import UFWValidator
 
 
 @dataclass
@@ -49,13 +35,14 @@ class LixetEngine:
     """Coordinate the deterministic inspection-to-verification workflow."""
 
     SEVERITY = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-    EXTERNAL_REQUIRED = {"ssh", "nginx", "sudoers", "fstab", "systemd"}
+    EXTERNAL_REQUIRED = {"ssh", "nginx", "sudoers", "fstab", "systemd", "fail2ban"}
 
     def __init__(
         self,
         dry_run: bool = False,
         yes: bool = False,
         config_path: str | None = None,
+        target_type: str | None = None,
         no_color: bool = False,
         backup_dir: str | Path | None = None,
         lock_dir: str | Path = "/run/lock/lixet",
@@ -66,124 +53,63 @@ class LixetEngine:
         self.dry_run = dry_run
         self.yes = yes
         self.config_path = config_path
+        self.target_type = target_type
         self.filesystem_root = Path(filesystem_root) if filesystem_root is not None else None
         self.runner = runner or CommandRunner()
         self.ui = ui or UI(no_color=no_color)
         self.backup_manager = BackupManager(backup_dir)
         self.repair_manager = RepairManager()
         self.transaction = RepairTransaction(self.backup_manager, self.repair_manager, lock_dir)
+        self.detector = TargetDetector()
         self._last: dict[str, InspectionResult] = {}
-        self.aliases = {
-            "sshd": "ssh",
-            "openssh": "ssh",
-            "network": "networking",
-            "hosts": "networking",
-            "firewall": "ufw",
-        }
-        self.supported_services = {
-            "ssh": self._spec(
-                SSHService,
-                SSHValidator,
-                "/etc/ssh/sshd_config",
-                "sshd",
-                False,
-                False,
-                "OpenSSH server configuration and includes",
-            ),
-            "nginx": self._spec(
-                NginxService,
-                NginxValidator,
-                "/etc/nginx/nginx.conf",
-                "nginx",
-                False,
-                False,
-                "Nginx root configuration and includes",
-            ),
-            "ufw": self._spec(
-                UFWService,
-                UFWValidator,
-                "/etc/ufw/ufw.conf",
-                "ufw",
-                False,
-                False,
-                "UFW state, defaults, and runtime status",
-            ),
-            "dns": self._spec(
-                DNSService,
-                DNSValidator,
-                "/etc/resolv.conf",
-                "resolvectl",
-                True,
-                True,
-                "Resolver syntax and local manager state",
-            ),
-            "networking": self._spec(
-                NetworkingService,
-                NetworkingValidator,
-                "/etc/hosts",
-                "ip",
-                True,
-                True,
-                "Hosts file and local network state",
-            ),
-            "systemd": self._spec(
-                SystemdService,
-                SystemdValidator,
-                "/etc/systemd/system",
-                "systemctl",
-                False,
-                False,
-                "systemd runtime, units, and drop-ins",
-            ),
-            "sudoers": self._spec(
-                SudoersService,
-                SudoersValidator,
-                "/etc/sudoers",
-                "visudo",
-                False,
-                False,
-                "sudoers syntax through visudo",
-            ),
-            "fstab": self._spec(
-                FstabService, FstabValidator, "/etc/fstab", "findmnt", False, True, "fstab syntax through findmnt"
-            ),
-            "sysctl": self._spec(
-                SysctlService,
-                SysctlValidator,
-                "/etc/sysctl.conf",
-                "sysctl",
-                False,
-                True,
-                "sysctl load order and effective overrides",
-            ),
-        }
+        self.aliases = aliases()
+        self.supported_services = {item.name: item.engine_spec() for item in iter_services()}
         if self.dry_run:
             self.ui.status("warn", "Dry run enabled. No files or backups will be created.")
 
-    @staticmethod
-    def _spec(
-        service, validator, default: str, command: str, required: bool, config_only: bool, description: str
-    ) -> dict:
-        return {
-            "service": service,
-            "validator": validator,
-            "default": default,
-            "command": command,
-            "required": required,
-            "config_only": config_only,
-            "description": description,
-        }
-
     def show_services(self) -> ExitCode:
         self.ui.banner("Supported Services", "Services Lixet can inspect")
-        width = max([len(name) for name in self.supported_services] + [len(alias) for alias in self.aliases])
-        for name, spec in self.supported_services.items():
-            label = self.ui.c(name.ljust(width), self.ui.BOLD + self.ui.CYAN)
-            print(f"  {label}  {spec['description']}")
-        self.ui.section("Aliases")
-        for alias, service_name in sorted(self.aliases.items()):
-            print(f"  {self.ui.c(alias.ljust(width), self.ui.BOLD)}  -> {self.ui.c(service_name, self.ui.CYAN)}")
+        print(
+            f"{self.ui.c('Service'.ljust(12), self.ui.BOLD + self.ui.CYAN)}  "
+            f"{self.ui.c('Aliases'.ljust(24), self.ui.BOLD + self.ui.CYAN)}  "
+            f"{self.ui.c('Default target'.ljust(28), self.ui.BOLD + self.ui.CYAN)}  "
+            f"{self.ui.c('Description', self.ui.BOLD + self.ui.CYAN)}"
+        )
+        for spec in iter_services():
+            aliases_text = ", ".join(spec.aliases) or "-"
+            print(
+                f"{self.ui.c(spec.name.ljust(12), self.ui.BOLD)}  "
+                f"{self.ui.clean(aliases_text).ljust(24)}  "
+                f"{self.ui.clean(spec.default_path).ljust(28)}  "
+                f"{self.ui.clean(spec.description)}"
+            )
         return ExitCode.OK
+
+    def scan(self, target: str) -> ExitCode:
+        service_name = resolve_service_name(target)
+        if service_name in self.supported_services:
+            if self.target_type:
+                self.ui.status("error", "--type works only with path targets.")
+                return ExitCode.USAGE
+            return self.scan_service(service_name)
+
+        path = Path(target)
+        if not path.exists() and not path.is_symlink():
+            self.ui.status("error", f"Target is not a supported service or existing path: {target}")
+            self.ui.kv("Supported", ", ".join(service_names()))
+            return ExitCode.USAGE
+        if self.config_path:
+            self.ui.status("error", "--config cannot be combined with a path target.")
+            return ExitCode.USAGE
+        if self.target_type:
+            explicit = resolve_service_name(self.target_type)
+            if explicit not in self.supported_services:
+                self.ui.status("error", f"Unknown configuration type: {self.target_type}")
+                return ExitCode.USAGE
+            return self._scan_detected_path(path, explicit, explicit_type=True)
+
+        detected = self.detector.detect(path)
+        return self._scan_detection_result(path, detected)
 
     def scan_service(self, service_name: str) -> ExitCode:
         service_name = self._service_name(service_name)
@@ -202,24 +128,77 @@ class LixetEngine:
             return ExitCode.OK
         return self._offer_repairs([(service_name, item) for item in result.issues], doctor=False)
 
-    def run_doctor(self) -> ExitCode:
-        self.ui.banner("Lixet Doctor", "Scanning supported services")
-        results = [self._inspect(name, doctor=True) for name in self.supported_services]
-        items = self._sort_items([(result.service, item) for result in results for item in result.issues])
-        self._doctor_summary(results, items)
-        for index, (service, item) in enumerate(items, start=1):
-            self.ui.issue(index, service, item)
-
-        if any(result.status == "failed" for result in results):
+    def _scan_detection_result(self, path: Path, detected: DetectionResult) -> ExitCode:
+        if detected.status == DetectionStatus.MATCH and detected.best:
+            return self._scan_detected_path(path, detected.best.service, detected)
+        self._show_detection(detected)
+        if detected.status == DetectionStatus.AMBIGUOUS:
+            if not self.ui.can_prompt():
+                self.ui.status("error", f"Use: lixet scan {self.ui.clean(str(path))} --type <service>")
+                return ExitCode.USAGE
+            choice = self.ui.prompt("Choose a type number, or q to cancel: ").strip().lower()
+            if choice == "q" or not choice:
+                self.ui.status("info", "Scan canceled.")
+                return ExitCode.USAGE
+            try:
+                index = int(choice)
+                candidate = detected.candidates[index - 1]
+            except (ValueError, IndexError):
+                self.ui.status("error", "Invalid configuration type selection.")
+                return ExitCode.USAGE
+            return self._scan_detected_path(path, candidate.service, detected)
+        if detected.status == DetectionStatus.ERROR:
+            self.ui.status("error", detected.message or "Could not inspect target.")
             return ExitCode.INSPECTION_FAILED
-        if not items:
-            incomplete = [result for result in results if result.status != "checked"]
-            if incomplete:
-                self.ui.status("warn", "Doctor completed with checks that were not run.")
-                return ExitCode.ISSUES
-            self.ui.status("ok", "No issues detected in completed checks.")
-            return ExitCode.OK
-        return self._offer_repairs(items, doctor=True)
+        self.ui.status("error", "Lixet could not identify this configuration file.")
+        self.ui.kv("Try", f"lixet scan {self.ui.clean(str(path))} --type nginx")
+        return ExitCode.USAGE
+
+    def _scan_detected_path(
+        self,
+        path: Path,
+        service_name: str,
+        detected: DetectionResult | None = None,
+        explicit_type: bool = False,
+    ) -> ExitCode:
+        spec = get_service(service_name)
+        target_type = "directory" if path.is_dir() else "file"
+        if target_type not in spec.accepted_target_types:
+            self.ui.status("error", f"{service_name} does not accept a {target_type} target.")
+            return ExitCode.USAGE
+        self._show_detected(path, service_name, detected, explicit_type)
+        return self.scan_service_with_path(service_name, str(path))
+
+    def scan_service_with_path(self, service_name: str, path: str) -> ExitCode:
+        old = self.config_path
+        self.config_path = path
+        try:
+            return self.scan_service(service_name)
+        finally:
+            self.config_path = old
+
+    def run_doctor(self) -> ExitCode:
+        while True:
+            self.ui.banner("Lixet Doctor", "Scanning supported services")
+            results = [self._inspect(name, doctor=True) for name in self.supported_services]
+            items = self._sort_items([(result.service, item) for result in results for item in result.issues])
+            self._doctor_summary(results, items)
+            for index, (service, item) in enumerate(items, start=1):
+                self.ui.issue(index, service, item)
+
+            if any(result.status == "failed" for result in results):
+                return ExitCode.INSPECTION_FAILED
+            if not items:
+                incomplete = [result for result in results if result.status != "checked"]
+                if incomplete:
+                    self.ui.status("warn", "Doctor completed with checks that were not run.")
+                    return ExitCode.ISSUES
+                self.ui.status("ok", "No issues detected in completed checks.")
+                return ExitCode.OK
+            result = self._offer_repairs(items, doctor=True)
+            if result == ExitCode.OK:
+                continue
+            return result
 
     def _inspect(self, service_name: str, custom_path: str | None = None, doctor: bool = False) -> InspectionResult:
         spec = self.supported_services[service_name]
@@ -288,27 +267,43 @@ class LixetEngine:
             )
             return ExitCode.ISSUES
 
-        prompt = "\nChoose a problem number, 'a' for all repairable, or Enter to abort: "
-        choice = self.ui.prompt(prompt).strip().lower()
-        if not choice:
+        self._selection_help()
+        choice = self.ui.prompt("Choose issues: ")
+        selection = parse_selection(choice, len(items))
+        if selection.action in {SelectionAction.EMPTY, SelectionAction.QUIT}:
             self.ui.status("info", "Repair aborted by user.")
             return ExitCode.ISSUES
-        if choice == "a":
-            selected = repairable
+        if selection.action == SelectionAction.RESCAN:
+            if doctor:
+                return ExitCode.OK
+            self.ui.status("info", "Rescan is available from doctor sessions.")
+            return ExitCode.ISSUES
+        if selection.action == SelectionAction.INVALID:
+            self.ui.status("error", selection.error)
+            return ExitCode.USAGE
+        if selection.action == SelectionAction.ALL:
+            selected = [(service, item) for service, item in repairable if item.get("repair_level") == "safe"]
+            guarded = len([item for _service, item in repairable if item.get("repair_level") == "guarded"])
+            if guarded:
+                self.ui.status("info", f"Skipped {guarded} guarded repair(s); explicit selection and APPLY are required.")
         else:
-            try:
-                selected_item = items[int(choice) - 1]
-            except (ValueError, IndexError):
-                self.ui.status("error", "Invalid selection.")
-                return ExitCode.USAGE
-            if not self._is_repairable(selected_item[1]):
-                self.ui.status("info", "The selected issue has no automatic repair.")
-                return ExitCode.ISSUES
-            selected = [selected_item]
+            selected = []
+            for index in selection.indexes:
+                service, item = items[index - 1]
+                if not self._is_repairable(item):
+                    self.ui.status("info", f"Skipped report-only issue: {item['code']}")
+                    continue
+                selected.append((service, item))
+        if not selected:
+            self.ui.status("info", "No selected issue has an automatic repair.")
+            return ExitCode.ISSUES
         approved = self._authorize(selected)
         if not approved:
             return ExitCode.ISSUES
-        return self._execute_repairs(approved)
+        result = self._execute_repairs(approved)
+        if doctor and result in {ExitCode.OK, ExitCode.ISSUES}:
+            return ExitCode.OK
+        return result
 
     def _authorize(self, items: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
         approved: list[tuple[str, dict]] = []
@@ -332,12 +327,7 @@ class LixetEngine:
     def _preview(self, items: list[tuple[str, dict]]) -> ExitCode:
         try:
             for plan in self._plans(items):
-                self.ui.section("Planned Changes")
-                self.ui.kv("File", plan.path)
-                if plan.snapshot.is_symlink:
-                    self.ui.kv("Resolved", plan.snapshot.resolved_path)
-                for message in self.repair_manager.preview_fixes(plan.path, plan.fixes, plan.snapshot):
-                    self.ui.bullet(message)
+                self._show_plan_diff(plan)
         except (RepairError, SnapshotError, TransactionError) as exc:
             self.ui.status("error", f"Cannot preview repairs: {exc}")
             return ExitCode.REPAIR_FAILED
@@ -350,12 +340,7 @@ class LixetEngine:
         try:
             plans = self._plans(items)
             for plan in plans:
-                self.ui.section("Planned Changes")
-                self.ui.kv("File", plan.path)
-                if plan.snapshot.is_symlink:
-                    self.ui.kv("Resolved", plan.snapshot.resolved_path)
-                for message in self.repair_manager.preview_fixes(plan.path, plan.fixes, plan.snapshot):
-                    self.ui.bullet(message)
+                self._show_plan_diff(plan)
             result = self.transaction.execute(plans, lambda: self._verify_items(items))
         except RollbackError as exc:
             self.ui.status("critical", str(exc))
@@ -367,6 +352,89 @@ class LixetEngine:
         for backup in result.backups:
             self.ui.kv("Backup", backup)
         return self._rescan_after_repair({service for service, _item in items})
+
+    def show_backups(self) -> ExitCode:
+        self.ui.banner("Lixet Backups")
+        try:
+            items = self.backup_manager.list_backups()
+        except BackupError as exc:
+            self.ui.status("error", str(exc))
+            return ExitCode.INSPECTION_FAILED
+        valid = [item for item in items if item.metadata]
+        corrupt = [item for item in items if item.error]
+        if not items:
+            self.ui.status("info", "No backups found.")
+            return ExitCode.OK
+        print(
+            f"{self.ui.c('ID'.ljust(34), self.ui.BOLD + self.ui.CYAN)}  "
+            f"{self.ui.c('Service'.ljust(12), self.ui.BOLD + self.ui.CYAN)}  "
+            f"{self.ui.c('Created'.ljust(19), self.ui.BOLD + self.ui.CYAN)}  "
+            f"{self.ui.c('File', self.ui.BOLD + self.ui.CYAN)}"
+        )
+        for item in valid:
+            meta = item.metadata or {}
+            created = self._friendly_time(str(meta.get("timestamp") or ""))
+            state = str(meta.get("verification") or "")
+            suffix = f" [{state}]" if state else ""
+            print(
+                f"{self.ui.clean(item.backup_id).ljust(34)}  "
+                f"{self.ui.clean(str(meta.get('service') or '-')).ljust(12)}  "
+                f"{self.ui.clean(created).ljust(19)}  "
+                f"{self.ui.clean(str(meta.get('original_path') or '-'))}{self.ui.c(suffix, self.ui.DIM)}"
+            )
+        for item in corrupt:
+            self.ui.status("warn", f"Skipped corrupt backup {item.backup_id}: {item.error}")
+        self.ui.status("info", f"{len(valid)} backup(s) found.")
+        return ExitCode.OK
+
+    def restore_backup(self, backup_id: str) -> ExitCode:
+        try:
+            self.backup_manager.validate_backup_id(backup_id)
+            meta = self.backup_manager.load_public_metadata(backup_id)
+            backup_content = self.backup_manager.read_backup_content(backup_id)
+        except BackupError as exc:
+            self.ui.status("error", str(exc))
+            return ExitCode.REPAIR_FAILED
+        target = Path(str(meta["original_path"]))
+        self.ui.banner("Lixet Restore")
+        self.ui.kv("Backup ID", backup_id)
+        self.ui.kv("Service", str(meta.get("service") or "-"))
+        self.ui.kv("Target", str(target))
+        try:
+            current = Path(str(meta.get("resolved_path") or target)).read_bytes() if target.exists() or target.is_symlink() else b""
+        except OSError as exc:
+            self.ui.status("error", f"Cannot read current target: {exc}")
+            return ExitCode.REPAIR_FAILED
+        self.ui.section("Restore Diff")
+        print(render_diff([DiffFile(str(target), current, backup_content)], self.ui))
+        if self.dry_run:
+            self.ui.status("warn", "Dry-run complete. No backup was created and no file was restored.")
+            return ExitCode.ISSUES
+        if not self.ui.can_prompt():
+            self.ui.status("error", "Restore requires an interactive terminal. Use --dry-run to preview.")
+            return ExitCode.REPAIR_FAILED
+        confirm = self.ui.prompt("Type RESTORE to continue: ").strip()
+        if confirm != "RESTORE":
+            self.ui.status("info", "Restore canceled.")
+            return ExitCode.ISSUES
+        pre_restore: str | None = None
+        try:
+            if target.exists() or target.is_symlink():
+                pre_restore = self.backup_manager.create_backup(
+                    str(target),
+                    service=str(meta.get("service") or "restore"),
+                    repair_ids=[f"pre-restore:{backup_id}"],
+                )
+            self.backup_manager.restore_backup(backup_id)
+        except BackupError as exc:
+            self.ui.status("error", f"Restore failed: {exc}")
+            if pre_restore:
+                self.ui.kv("Pre-restore backup", Path(pre_restore).parent.name)
+            return ExitCode.REPAIR_FAILED
+        self.ui.status("ok", "Backup restored successfully.")
+        if pre_restore:
+            self.ui.kv("Pre-restore backup", Path(pre_restore).parent.name)
+        return ExitCode.OK
 
     def _plans(self, items: list[tuple[str, dict]]) -> list[RepairPlan]:
         grouped: dict[str, dict] = {}
@@ -385,6 +453,16 @@ class LixetEngine:
             RepairPlan(path, group["fixes"], group["snapshot"], group["service"], group["ids"])
             for path, group in grouped.items()
         ]
+
+    def _show_plan_diff(self, plan: RepairPlan) -> None:
+        self.ui.section("Planned Changes")
+        self.ui.kv("File", plan.path)
+        if plan.snapshot.is_symlink:
+            self.ui.kv("Resolved", plan.snapshot.resolved_path)
+        require_unchanged(plan.snapshot)
+        before = Path(plan.snapshot.resolved_path).read_bytes()
+        after = repaired_bytes(before, plan.fixes)
+        print(render_diff([DiffFile(plan.path, before, after)], self.ui))
 
     def _verify_items(self, items: list[tuple[str, dict]]) -> VerificationResult:
         grouped: dict[str, list[dict]] = {}
@@ -435,9 +513,14 @@ class LixetEngine:
 
     @staticmethod
     def _external_result(service: str, data: dict) -> dict | None:
-        key = {"ssh": "config_test", "nginx": "config_test", "sudoers": "config_test", "fstab": "findmnt_verify"}.get(
-            service
-        )
+        key = {
+            "ssh": "config_test",
+            "nginx": "config_test",
+            "sudoers": "config_test",
+            "fstab": "findmnt_verify",
+            "systemd": "config_test",
+            "fail2ban": "config_test",
+        }.get(service)
         return data.get(key) if key else None
 
     def _rescan_after_repair(self, services: set[str]) -> ExitCode:
@@ -523,9 +606,61 @@ class LixetEngine:
             "unsafe",
         )
 
+    def _show_detected(
+        self,
+        path: Path,
+        service: str,
+        detected: DetectionResult | None,
+        explicit_type: bool,
+    ) -> None:
+        self.ui.banner("Configuration Detected")
+        self.ui.kv("File", str(path))
+        print(f"  {self.ui.c('Type:'.ljust(12), self.ui.BOLD + self.ui.CYAN)} {self.ui.c(service, self.ui.BOLD + self.ui.GREEN)}")
+        if explicit_type:
+            self.ui.kv("Matched by", "explicit --type")
+        elif detected and detected.best:
+            self.ui.kv("Matched by", self._candidate_reason(detected.best))
+
+    def _show_detection(self, detected: DetectionResult) -> None:
+        if detected.status == DetectionStatus.AMBIGUOUS:
+            self.ui.status("warn", "Could not identify the configuration type with certainty.")
+            for index, candidate in enumerate(detected.candidates, start=1):
+                print(
+                    f"  {self.ui.c(str(index) + '.', self.ui.BOLD)} "
+                    f"{self.ui.c(candidate.service.ljust(10), self.ui.BOLD + self.ui.CYAN)} "
+                    f"matched: {self.ui.clean(self._candidate_reason(candidate))}"
+                )
+            return
+        if detected.message:
+            self.ui.status("warn", detected.message)
+
+    @staticmethod
+    def _candidate_reason(candidate) -> str:
+        names = []
+        for evidence in candidate.evidence:
+            label = {
+                "exact_path": "known path",
+                "filename": "known filename",
+                "parent": "parent directory",
+                "content": evidence.detail,
+            }.get(evidence.kind, evidence.kind)
+            if label not in names:
+                names.append(label)
+        return ", ".join(names)
+
+    def _selection_help(self) -> None:
+        self.ui.section("Choose issues")
+        self.ui.kv("number/list/range", "Select repairable issues")
+        self.ui.kv("a", "Select all safe repairs")
+        self.ui.kv("r", "Rescan")
+        self.ui.kv("q", "Quit")
+
+    @staticmethod
+    def _friendly_time(value: str) -> str:
+        return value.replace("T", " ").replace("+00:00", "").replace("Z", "")[:19] if value else "-"
+
     def _service_name(self, name: str) -> str:
-        key = name.lower()
-        return self.aliases.get(key, key)
+        return resolve_service_name(name)
 
     @classmethod
     def _sort_issues(cls, issues: list[dict]) -> list[dict]:

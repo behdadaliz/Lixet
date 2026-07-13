@@ -19,7 +19,25 @@ PROJECT_ID = "github.com/behdadaliz/Lixet"
 MARKER_NAME = ".lixet-install.json"
 REQUIRED_FILES = ("VERSION", "main.py", "install.py")
 REQUIRED_DIRS = ("cli", "core", "services", "validators", "repair", "backup", "utils")
-SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "env", "developer", "docker"}
+SKIP_DIRS = {
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".cache",
+    ".venv",
+    "venv",
+    "env",
+    "developer",
+    "docker",
+    ".agent",
+    ".agents",
+    ".codex",
+    "build",
+    "dist",
+    "htmlcov",
+}
 SKIP_NAMES = {".env"}
 
 
@@ -285,7 +303,11 @@ def _skip(path: Path) -> bool:
     name = path.name
     if name in SKIP_DIRS or name in SKIP_NAMES:
         return True
-    if name.endswith((".pyc", ".bak")) or name.startswith(".env."):
+    if name in {".coverage", "coverage.xml", ".DS_Store", "Thumbs.db"}:
+        return True
+    if name.endswith(
+        (".pyc", ".pyo", ".bak", ".tmp", ".temp", ".zip", ".tar", ".tar.gz", ".tgz", ".log", ".egg-info")
+    ) or name.startswith(".env."):
         return True
     if ".lixet." in name and name.endswith(".bak"):
         return True

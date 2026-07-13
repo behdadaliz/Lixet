@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+*.pyo
 *$py.class
 .pytest_cache/
 .mypy_cache/
@@ -16,11 +17,19 @@ dist/
 *.egg-info/
 *.bak
 *.lixet.*.bak
+*.tmp
+*.temp
+*.zip
+*.tar
+*.tar.gz
+*.tgz
 .env
 .env.*
 .idea/
 .vscode/
+.agent/
 .agents/
+.codex/
 .DS_Store
 Thumbs.db
 *.log

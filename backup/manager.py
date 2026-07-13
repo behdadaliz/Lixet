@@ -9,10 +9,12 @@ import os
 import re
 import secrets
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from repair.snapshot import FileSnapshot, SnapshotError, capture_snapshot
+from utils.ui import UI
 
 
 class BackupError(RuntimeError):
@@ -21,6 +23,14 @@ class BackupError(RuntimeError):
 
 class RollbackError(BackupError):
     """Raised when a rollback cannot be completed and verified."""
+
+
+@dataclass(frozen=True)
+class BackupListItem:
+    backup_id: str
+    manifest_path: str
+    metadata: dict | None = None
+    error: str | None = None
 
 
 class BackupManager:
@@ -120,6 +130,57 @@ class BackupManager:
         payload = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8") + b"\n"
         self._write_file(manifest_path, payload, 0o600)
 
+    def list_backups(self) -> list[BackupListItem]:
+        try:
+            root = self.backup_dir.resolve(strict=True)
+        except OSError:
+            return []
+        if not root.is_dir() or root.is_symlink():
+            raise BackupError(f"Unsafe backup directory: {self.backup_dir}")
+        items: list[BackupListItem] = []
+        for bundle in sorted(root.iterdir(), key=lambda item: item.name, reverse=True):
+            if not bundle.is_dir() or not self.ID_RE.fullmatch(bundle.name):
+                continue
+            manifest = bundle / "manifest.json"
+            try:
+                metadata = self.load_public_metadata(bundle.name)
+                items.append(BackupListItem(bundle.name, str(manifest), metadata, None))
+            except BackupError as exc:
+                items.append(BackupListItem(bundle.name, str(manifest), None, UI.clean(str(exc))))
+        return items
+
+    def load_public_metadata(self, backup_id: str) -> dict:
+        manifest_path, manifest = self._load_manifest(backup_id)
+        public = {
+            "backup_id": manifest.get("backup_id"),
+            "timestamp": manifest.get("timestamp"),
+            "original_path": manifest.get("original_path"),
+            "resolved_path": manifest.get("resolved_path"),
+            "is_symlink": manifest.get("is_symlink"),
+            "symlink_target": manifest.get("symlink_target"),
+            "service": manifest.get("service"),
+            "repair_ids": manifest.get("repair_ids") if isinstance(manifest.get("repair_ids"), list) else [],
+            "verification": manifest.get("verification"),
+            "manifest_path": str(manifest_path),
+        }
+        return self._sanitize_public(public)
+
+    def read_backup_content(self, backup_id: str) -> bytes:
+        manifest_path, manifest = self._load_manifest(backup_id)
+        content_path = manifest_path.parent / "content"
+        try:
+            content = content_path.read_bytes()
+        except OSError as exc:
+            raise BackupError(f"Cannot read backup content: {exc}") from exc
+        if hashlib.sha256(content).hexdigest() != manifest.get("sha256"):
+            raise BackupError("Backup content hash does not match its manifest")
+        return content
+
+    def validate_backup_id(self, backup_id: str) -> str:
+        if not self.ID_RE.fullmatch(backup_id):
+            raise BackupError("Invalid backup identifier")
+        return backup_id
+
     def _prepare_root(self) -> None:
         try:
             self.backup_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -133,9 +194,7 @@ class BackupManager:
     def _load_manifest(self, backup_path: str) -> tuple[Path, dict]:
         candidate = Path(backup_path)
         if candidate.name != "manifest.json":
-            if not self.ID_RE.fullmatch(candidate.name):
-                raise BackupError("Invalid backup identifier")
-            candidate = self.backup_dir / candidate.name / "manifest.json"
+            candidate = self.backup_dir / self.validate_backup_id(candidate.name) / "manifest.json"
         try:
             root = self.backup_dir.resolve(strict=True)
             resolved = candidate.resolve(strict=True)
@@ -153,6 +212,16 @@ class BackupManager:
         if not isinstance(manifest, dict) or manifest.get("backup_id") != resolved.parent.name:
             raise BackupError("Backup manifest identity is invalid")
         return resolved, manifest
+
+    @classmethod
+    def _sanitize_public(cls, value):
+        if isinstance(value, dict):
+            return {UI.clean(str(key)): cls._sanitize_public(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._sanitize_public(item) for item in value]
+        if isinstance(value, str):
+            return UI.clean(value)
+        return value
 
     @staticmethod
     def _write_file(path: Path, data: bytes, mode: int) -> None:

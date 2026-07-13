@@ -1,12 +1,44 @@
 # Lixet
 
-Lixet is a deterministic Linux configuration diagnosis and repair CLI. It reads known configuration files, runs trusted local validation tools when they are available, and explains the problems it can prove.
+<<<<<<< HEAD
+Lixet is a Linux command-line tool for finding and carefully repairing common configuration problems.
 
-Automatic repair is deliberately narrow. Lixet does not use AI, guess a desired policy, restart services, change firewall rules, mount filesystems, or apply sysctl values.
+It reads known system configuration files, runs local validation commands when available, and explains what it found before changing anything. Lixet uses deterministic rules only; it does not use AI-generated fixes or guess your system policy.
 
-> **Status:** `v0.2.2-beta` is a controlled beta release for testing on disposable Linux systems. It is not recommended for production systems yet.
+> **Status:** Lixet `v0.3.0-beta` is beta software. Test it on non-critical systems first and review every repair before applying it.
 
-## Install
+## What Lixet Can Do
+
+- Scan by service name, alias, file path, or supported directory.
+- Detect configuration type from known paths, filenames, parent directories, and bounded content signatures.
+- Scan all supported services with `doctor`.
+- Show colored unified diffs before any repair.
+- Apply only narrow deterministic repairs.
+- Keep guarded repairs behind explicit interactive confirmation.
+- List protected backups and restore one safely.
+- Update an installed copy from published GitHub Releases.
+
+Many findings are report-only because the correct action depends on administrator intent.
+=======
+Lixet is a Linux command-line tool for finding and repairing common configuration problems.
+
+It reads known system configuration files, runs local validation commands when they are available, and explains what it found before changing anything. Lixet uses deterministic rules; it does not generate fixes with AI or guess what policy your system should use.
+
+
+## What Lixet Can Do
+
+- Scan one supported service or run a broader system check.
+- Show findings with severity, evidence, affected file, and suggested action.
+- Offer automatic repair only when the fix is narrow and deterministic.
+- Preview supported repairs with `--dry-run`.
+- Back up files before writing to protected configuration paths.
+- Re-check the result after a repair and roll back if validation fails.
+- Update an installed copy from published GitHub Releases.
+
+Many findings are reported without an automatic fix because the correct action depends on your system policy.
+>>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
+
+## Installation
 
 Lixet requires Linux and Python 3.10 or newer.
 
@@ -16,114 +48,250 @@ cd Lixet
 sudo sh install.sh
 ```
 
-The installer creates an owned installation under `/opt/lixet` and exposes the `lixet` command through `/usr/local/bin/lixet`. It refuses to replace unrelated entries unless `--force` is explicitly passed.
-
-To uninstall an installation owned by Lixet:
+<<<<<<< HEAD
+After installation:
+=======
+After installation, the `lixet` command is available system-wide:
+>>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
 
 ```bash
-sudo sh uninstall.sh
+lixet
 ```
 
-## Commands
+## Basic Usage
 
 ```bash
+<<<<<<< HEAD
+lixet scan ssh
+lixet scan /etc/ssh/sshd_config
+lixet scan /etc/nginx/nginx.conf
+lixet scan /etc/fstab
+lixet scan /etc/hosts
+lixet scan /etc/systemd/system/example.service
+lixet scan /etc/fail2ban
+lixet scan /etc/fail2ban/jail.local
+lixet scan ./custom-nginx.conf --type nginx
+lixet doctor
+lixet services
+lixet backups
+lixet restore <backup-id>
+=======
 lixet                           # Show help
+lixet --help                    # Show help
 lixet services                  # List supported services
 lixet scan ssh                  # Scan one service
-lixet scan ssh --dry-run        # Preview available repairs
-lixet scan ssh -y               # Apply proven safe repairs only
-lixet doctor                    # Scan every supported service
+lixet scan nginx                # Scan another supported service
+lixet scan ssh --dry-run        # Preview repairs without changing files
+sudo lixet scan ssh -y          # Apply supported safe repairs
+lixet doctor                    # Scan all supported services
 lixet doctor --dry-run          # Preview repairs from doctor
-lixet doctor -y                 # Apply proven safe repairs only
-lixet --version                 # Show installed and latest release versions
-sudo lixet --update             # Install a newer trusted release
-lixet --no-color scan ssh       # Disable ANSI colors
+sudo lixet doctor -y            # Apply supported safe repairs from doctor
+lixet --no-color scan ssh       # Disable colored output
+>>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
 ```
 
-Only `scan` accepts a custom configuration path:
+Preview repairs without writing:
+
+```bash
+lixet scan ssh --dry-run
+lixet doctor --dry-run
+lixet restore <backup-id> --dry-run
+```
+
+Apply supported safe repairs without prompting:
+
+```bash
+sudo lixet scan ssh -y
+sudo lixet doctor -y
+```
+
+`-y` never approves guarded repairs.
+
+Use a custom configuration path for service scans:
 
 ```bash
 lixet scan nginx --config /path/to/nginx.conf
 ```
 
-`doctor --config` is rejected because one file must never be interpreted by unrelated validators.
+<<<<<<< HEAD
+Disable colored output:
+
+```bash
+lixet --no-color scan ssh
+```
+
+## Type Detection
+
+When `scan` receives a path, Lixet tries to identify the configuration type deterministically. If the result is clear, it scans with that service. If the result is ambiguous in an interactive terminal, Lixet asks you to choose. In non-interactive mode, it refuses to guess and asks for `--type`.
+
+```bash
+lixet scan ./custom.conf --type nginx
+```
+
+Unknown, empty, binary, unreadable, or broken-symlink targets are handled without tracebacks.
+
+## Doctor
+
+`lixet doctor` scans all registered services. In interactive mode, repair selection supports:
+
+```text
+1
+1,3,5
+1-4
+1,3-5,8
+a
+r
+q
+```
+
+Report-only findings are explained and skipped. `r` rescans. `q` exits safely.
+
+## Backups And Restore
+
+List protected backups:
+
+```bash
+lixet backups
+```
+
+Preview a restore:
+
+```bash
+lixet restore <backup-id> --dry-run
+```
+
+Restore requires an interactive terminal and exact confirmation:
+
+```bash
+sudo lixet restore <backup-id>
+```
+
+Before restoring an existing target, Lixet creates a new protected backup of the current file so the restore can be undone manually if needed.
 
 ## Supported Services
 
-`lixet services` prints the live service registry and short descriptions. The current names are:
+Run `lixet services` for the live registry. This release supports:
 
-- `ssh`: OpenSSH server configuration and includes
-- `nginx`: root configuration and includes
-- `ufw`: state, defaults, and runtime status
-- `dns`: resolver syntax and local manager state
-- `networking`: `/etc/hosts` and local network state
-- `systemd`: runtime state, local units, and drop-ins
-- `sudoers`: syntax through `visudo`
-- `fstab`: syntax through `findmnt`
-- `sysctl`: load order and effective overrides
+| Service | Aliases | Default target |
+| --- | --- | --- |
+| `ssh` | `sshd`, `openssh` | `/etc/ssh/sshd_config` |
+| `nginx` | - | `/etc/nginx/nginx.conf` |
+| `ufw` | `firewall` | `/etc/ufw/ufw.conf` |
+| `dns` | - | `/etc/resolv.conf` |
+| `networking` | `network`, `hosts` | `/etc/hosts` |
+| `fail2ban` | `f2b`, `fail2ban-client` | `/etc/fail2ban` |
+| `systemd` | - | `/etc/systemd/system` |
+| `sudoers` | - | `/etc/sudoers` |
+| `fstab` | - | `/etc/fstab` |
+| `sysctl` | - | `/etc/sysctl.conf` |
 
-Aliases include `sshd` and `openssh` for `ssh`, `hosts` and `network` for `networking`, and `firewall` for `ufw`.
+Fail2ban support is conservative: Lixet inspects includes, jails, filters, runtime status, and `fail2ban-client -t` output, but it does not restart Fail2ban, change firewall rules, or rewrite ban policy.
 
-## Repairs
+## Safety
 
-Every finding has one repair level:
+- Scans are read-only.
+- Repairs require explicit approval unless `-y` is used for supported safe repairs.
+- Guarded repairs require typing the exact approval word shown by Lixet.
+- Diffs are shown before confirmation.
+- Backups are created before writes.
+- Lixet does not restart services, change firewall rules, mount filesystems, or apply sysctl values.
+- Normal scans do not require internet access.
+- `--version` and `--update` contact GitHub Releases.
 
-- **safe**: a small deterministic edit covered by focused tests; `-y` may approve it.
-- **guarded**: a sensitive exact-line edit that requires an interactive terminal and typing `APPLY`; `-y` skips it.
-- **report-only**: no automatic edit is offered because system policy or intent cannot be proven.
+## Version And Updates
 
-The safe repairs currently restore missing standard localhost entries or the `localhost` token in `/etc/hosts`. Exact directives rejected by `sshd` in SSH configuration, and exact invalid lines in included sudoers files, may be offered as guarded repairs. Most SSH policy, Nginx, DNS, UFW, systemd, fstab, and sysctl findings are report-only.
+```bash
+lixet --version
+sudo lixet --update
+```
 
-Before a write, Lixet checks that the inspected file still has the same path, symlink state, device, inode, size, timestamp, content hash, mode, owner, and group. A repair transaction then:
+The updater follows the installed release channel and installs the latest compatible published GitHub Release.
 
-1. previews every exact edit;
-2. creates a protected backup under `/var/lib/lixet/backups`;
-3. locks the affected paths;
-4. writes atomically without replacing a supported symlink object;
-5. re-inspects and re-validates the result;
-6. runs the required external verifier for SSH, Nginx, sudoers, fstab, or systemd repairs;
-7. rolls back every changed file if validation fails or the operation is interrupted.
+## Uninstall
 
-There is no user-facing restore command yet. Backup restore exists as a tested internal API; keep backup bundles intact.
+```bash
+sudo sh uninstall.sh
+```
 
-Managed resolver links, including common systemd-resolved, NetworkManager, and resolvconf setups, are detected and left report-only. Broken, cyclic, unreadable, or changing targets are rejected.
+## Current Limitations
 
-## Permissions And Offline Behavior
+There is no package repository, shell completion, JSON output, backup pruning, backup export, remote backup storage, or automatic service restart support.
 
-Read-only scans can run without root when the relevant files and commands are accessible. Repairing protected system files normally requires `sudo`. Installation, uninstallation, and update require Linux root privileges.
+## Contributing
 
-Normal scans do not make external DNS or internet requests. `lixet --version` contacts the GitHub Releases API when available and degrades to an unavailable status when offline. `lixet --update` requires network access.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+=======
+## Supported Services
 
-Updates use the installed stable or prerelease channel and accept only a newer GitHub Release with:
+`lixet services` prints the live list from the installed version. In this release, Lixet supports:
 
-- a versioned `lixet-<version>.zip` asset;
-- a matching `.sha256` file or `SHA256SUMS` asset;
-- a valid SemVer release tag matching the archive's `VERSION` file.
+| Service | What Lixet checks |
+| --- | --- |
+| `ssh` | OpenSSH server configuration and included files |
+| `nginx` | Nginx root configuration and included files |
+| `ufw` | UFW state, defaults, and runtime status |
+| `dns` | Resolver syntax and local manager state |
+| `networking` | `/etc/hosts` and local network state |
+| `systemd` | systemd runtime state, units, and drop-ins |
+| `sudoers` | sudoers syntax through `visudo` |
+| `fstab` | fstab syntax through `findmnt` |
+| `sysctl` | sysctl load order and effective overrides |
 
-Mutable branch archives, same-version reinstalls, downgrades, symlinks, special files, unsafe paths, oversized archives, and checksum mismatches are rejected. The staged CLI is compiled and smoke-tested before the existing installation is replaced.
+Aliases are also supported: `sshd` and `openssh` map to `ssh`, `hosts` and `network` map to `networking`, and `firewall` maps to `ufw`.
 
-## Exit Codes
+## How Repairs Work
 
-| Code | Meaning |
-| ---: | --- |
-| `0` | Completed successfully with no unresolved detected issue |
-| `1` | Scan completed, but issues remain or a dry-run found issues |
-| `2` | Invalid command-line usage |
-| `3` | Inspection or runtime check failed |
-| `4` | Repair, verification, installation, or update failed |
-| `5` | Rollback failed |
+When Lixet finds repairable issues, it shows the problem and asks what to do. You can choose one repairable issue, choose all repairable issues, or stop without changing anything.
 
-An unavailable or skipped required check never produces a healthy result.
+Before writing, Lixet creates a backup and checks that the target file still matches what was inspected. After writing, it scans again and uses external validators when the service requires one, such as `sshd`, `nginx`, `visudo`, `findmnt`, or `systemd` checks.
 
-## Known Limitations
+If a repair cannot be verified, Lixet tries to restore the previous files from the backup made for that repair.
 
-- The configured Linux distribution matrix and real symlink paths should be checked in GitHub Actions before each release.
-- Service installation and enabled-state discovery varies by distribution; Lixet reports unsupported or unavailable checks instead of guessing.
-- SELinux labels, POSIX ACLs, and extended attributes are not yet preserved explicitly.
-- Release archives are SHA-256 verified but not signed.
-- There is no JSON output, package repository, shell completion, or user-facing backup browser/restore command yet.
+## Repair Levels
 
-See [Architecture](ARCHITECTURE.md) and [Contributing](CONTRIBUTING.md) for project details.
+- **safe** repairs are small deterministic edits. They can be applied with `-y`.
+- **guarded** repairs are more sensitive exact-line edits. They require interactive confirmation.
+- **report-only** findings do not have an automatic repair because the correct change cannot be proven.
+
+In the current beta, automatic repair is limited. Lixet can restore missing standard localhost entries in `/etc/hosts`, restore the `localhost` name on the loopback line, and offer some exact-line guarded removals for rejected SSH or sudoers lines. Most other findings are reported for manual review.
+
+## Version And Updates
+
+```bash
+lixet --version       # Show installed and latest available GitHub Release
+sudo lixet --update   # Update an installed copy
+```
+
+The updater follows the installed release channel, downloads the latest compatible GitHub Release source archive, validates the staged source, runs a small CLI self-check, and then installs it transactionally.
+
+## Uninstall
+
+```bash
+sudo sh uninstall.sh
+```
+
+## Safety
+
+- Scans are read-only.
+- Repairs require explicit approval unless `-y` is used for supported safe repairs.
+- Guarded repairs are skipped by `-y`.
+- Lixet does not restart services for you.
+- Lixet does not change firewall rules, mount filesystems, or apply sysctl values directly.
+- Normal scans do not require internet access.
+- `--version` and `--update` contact GitHub Releases.
+
+## Project Status
+
+Lixet is still early beta. The current focus is predictable diagnostics, conservative repairs, and safe update behavior.
+
+Not available yet: a package repository, shell completions, JSON output, and a user-facing backup restore command.
+
+For more detail, read [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Contributing
+
+Contributions are welcome, especially small validators, tests, documentation improvements, and careful repair rules. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+>>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
 
 ## Support
 

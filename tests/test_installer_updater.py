@@ -66,6 +66,36 @@ class InstallerTests(unittest.TestCase):
             self.assertFalse((installed / "sentinel").exists())
             self.assertFalse(any(path.name.startswith(".lixet-install-backup-") for path in installed.parent.iterdir()))
 
+    def test_generated_local_junk_is_not_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            installed = root / "opt" / "lixet"
+            command = root / "bin" / "lixet"
+            create_source_tree(source)
+            for name in (".agents", ".agent", ".codex", ".pytest_cache", "lixet.egg-info"):
+                directory = source / name
+                directory.mkdir()
+                (directory / "state").write_text("local", encoding="utf-8")
+            for name in (".env.local", "debug.log", "archive.zip", "module.pyc", "notes.tmp"):
+                (source / name).write_text("local", encoding="utf-8")
+            transaction = InstallTransaction(source, installed, command)
+            with mock.patch.object(InstallTransaction, "_link_command"):
+                transaction.install()
+            for name in (
+                ".agents",
+                ".agent",
+                ".codex",
+                ".pytest_cache",
+                "lixet.egg-info",
+                ".env.local",
+                "debug.log",
+                "archive.zip",
+                "module.pyc",
+                "notes.tmp",
+            ):
+                self.assertFalse((installed / name).exists(), name)
+
     def test_unowned_install_directory_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -144,8 +174,8 @@ class VersionTests(unittest.TestCase):
         self.assertEqual(sorted(ordered, key=version_key), ordered)
 
     def test_legacy_release_name_is_normalized_without_losing_number(self) -> None:
-        self.assertEqual(normalize_version("Lixet Alpha_0.1.4"), "0.1.4-alpha")
-        self.assertEqual(normalize_version("v0.2.0-beta2"), "0.2.0-beta.2")
+        self.assertEqual(normalize_version("Lixet Beta_0.3.0"), "0.3.0-beta")
+        self.assertEqual(normalize_version("v1.2.3-beta2"), "1.2.3-beta.2")
 
     def test_stable_channel_excludes_prerelease(self) -> None:
         items = [
@@ -174,7 +204,7 @@ class UpdaterTests(unittest.TestCase):
     def _updater(self, root: Path, opener=None) -> LixetUpdater:
         install = root / "install"
         install.mkdir()
-        (install / "VERSION").write_text("0.1.0-beta.1\n", encoding="utf-8")
+        (install / "VERSION").write_text("0.3.0-alpha\n", encoding="utf-8")
         return LixetUpdater(
             no_color=True,
             install_dir=install,
@@ -186,7 +216,7 @@ class UpdaterTests(unittest.TestCase):
     def test_same_version_does_not_download_or_reinstall(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            release = [{"tag_name": "v0.1.0-beta.1", "name": "same", "assets": []}]
+            release = [{"tag_name": "v0.3.0-alpha", "name": "same", "assets": []}]
             updater = self._updater(root, opener=lambda *_args, **_kwargs: FakeResponse(json.dumps(release).encode()))
             with self.assertRaises(UpdateNotNeeded):
                 updater._download_latest_release(root)
@@ -194,33 +224,45 @@ class UpdaterTests(unittest.TestCase):
     def test_downgrade_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            release = [{"tag_name": "v0.0.9", "name": "old", "assets": []}]
+            release = [{"tag_name": "v0.3.0-alpha", "name": "old", "assets": []}]
+            updater = self._updater(root, opener=lambda *_args, **_kwargs: FakeResponse(json.dumps(release).encode()))
+            (updater.install_dir / "VERSION").write_text("0.3.0-beta\n", encoding="utf-8")
+            with self.assertRaises(UpdateError):
+                updater._download_latest_release(root)
+
+    def test_release_requires_github_source_archive_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            release = [{"tag_name": "v0.3.0-beta", "name": "newer"}]
             updater = self._updater(root, opener=lambda *_args, **_kwargs: FakeResponse(json.dumps(release).encode()))
             with self.assertRaises(UpdateError):
                 updater._download_latest_release(root)
 
-    def test_release_requires_versioned_archive_and_checksum(self) -> None:
+<<<<<<< HEAD
+    def test_release_source_archive_is_downloaded_from_zipball_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            updater = self._updater(Path(tmp))
-            release = {"assets": [{"name": "source.zip", "browser_download_url": "https://example.invalid/source"}]}
+            root = Path(tmp)
+            version = "0.3.0-beta"
+=======
+    def test_release_requires_github_source_archive_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            release = [{"tag_name": "v0.2.0-beta.1", "name": "newer"}]
+            updater = self._updater(root, opener=lambda *_args, **_kwargs: FakeResponse(json.dumps(release).encode()))
             with self.assertRaises(UpdateError):
-                updater._release_assets(release, parse_version("0.2.0-beta.1"))
+                updater._download_latest_release(root)
 
-    def test_checksum_mismatch_is_rejected(self) -> None:
+    def test_release_source_archive_is_downloaded_from_zipball_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             version = "0.2.0-beta.1"
+>>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
+            archive = b"release source archive"
             release = [
                 {
                     "tag_name": "v" + version,
                     "name": version,
-                    "assets": [
-                        {"name": f"lixet-{version}.zip", "browser_download_url": "https://example.invalid/archive"},
-                        {
-                            "name": f"lixet-{version}.zip.sha256",
-                            "browser_download_url": "https://example.invalid/checksum",
-                        },
-                    ],
+                    "zipball_url": "https://example.invalid/source.zip",
                 }
             ]
 
@@ -228,30 +270,13 @@ class UpdaterTests(unittest.TestCase):
                 url = request.full_url
                 if "releases" in url:
                     return FakeResponse(json.dumps(release).encode())
-                if "checksum" in url:
-                    return FakeResponse(("0" * 64).encode())
-                return FakeResponse(b"not-the-declared-archive")
+                self.assertEqual(url, "https://example.invalid/source.zip")
+                return FakeResponse(archive)
 
             updater = self._updater(root, opener)
-            with self.assertRaises(UpdateError):
-                updater._download_latest_release(root)
-
-    def test_sha256sums_selects_the_release_archive_entry(self) -> None:
-        expected = "1" * 64
-        other = "2" * 64
-        text = f"{other}  unrelated.zip\n{expected}  lixet-0.2.0-beta.1.zip\n"
-        self.assertEqual(
-            LixetUpdater._parse_checksum(text, "lixet-0.2.0-beta.1.zip"),
-            expected,
-        )
-
-    def test_sha256sums_rejects_missing_or_duplicate_archive_entry(self) -> None:
-        with self.assertRaises(UpdateError):
-            LixetUpdater._parse_checksum("1" * 64 + "  other.zip\n", "lixet-0.2.0-beta.1.zip")
-
-        text = f"{'1' * 64}  lixet-0.2.0-beta.1.zip\n{'2' * 64}  lixet-0.2.0-beta.1.zip\n"
-        with self.assertRaises(UpdateError):
-            LixetUpdater._parse_checksum(text, "lixet-0.2.0-beta.1.zip")
+            path, target = updater._download_latest_release(root)
+            self.assertEqual(path.read_bytes(), archive)
+            self.assertEqual(target, parse_version(version))
 
     def test_download_size_limit_is_enforced_and_partial_file_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -300,7 +325,7 @@ class UpdaterTests(unittest.TestCase):
             archive = root / "many.zip"
             with zipfile.ZipFile(archive, "w") as bundle:
                 bundle.writestr("root/main.py", b"print('x')")
-                bundle.writestr("root/VERSION", b"0.2.0")
+                bundle.writestr("root/VERSION", b"0.3.0-beta")
             with self.assertRaises(UpdateError):
                 updater._extract(archive, root / "extract-work")
 
@@ -308,10 +333,10 @@ class UpdaterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "source"
-            create_source_tree(source, "0.2.0-beta.1")
+            create_source_tree(source, "0.3.0-alpha")
             updater = self._updater(root)
             with self.assertRaises(UpdateError):
-                updater._validate_source(source, parse_version("0.2.0-beta.2"))
+                updater._validate_source(source, parse_version("0.3.0-beta"))
 
     def test_staged_source_compile_and_cli_self_test(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -34,7 +34,7 @@ What other tools, commands, scripts, or manual steps have you tried?
 
 If this feature would read or modify configuration files, describe the risks, authoritative verifier, rollback plan, and files involved. Should it be report-only, `safe`, or `guarded`? Explain why.
 
-Would the feature restart a service, change firewall rules, mount a filesystem, apply sysctl values, choose a DNS provider, or alter authentication/access policy? Lixet does not currently automate those operations.
+Would the feature restart a service, change firewall rules, change Fail2ban actions or ban policy, mount a filesystem, apply sysctl values, choose a DNS provider, or alter authentication/access policy? Lixet does not currently automate those operations.
 
 ## Additional context
 

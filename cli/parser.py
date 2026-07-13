@@ -10,6 +10,7 @@ from difflib import get_close_matches
 from typing import NoReturn
 
 from core.models import ExitCode
+from core.registry import service_names
 from utils.ui import UI
 
 
@@ -56,6 +57,7 @@ class LixetArgumentParser(argparse.ArgumentParser):
 
 def parse_and_execute(args: list[str]) -> int:
     no_color = "--no-color" in args
+    services = ", ".join(service_names())
 
     class Subparser(LixetArgumentParser):
         def __init__(self, *sub_args, **sub_kwargs) -> None:
@@ -68,33 +70,37 @@ def parse_and_execute(args: list[str]) -> int:
         parents=[common],
         no_color=no_color,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description=textwrap.dedent("""
+        description=textwrap.dedent(f"""
             Lixet - deterministic Linux configuration recovery.
 
-            Available commands:
-              lixet                          Show this help page
-              lixet --help                   Show this help page
-              lixet --version                Show installed and latest Lixet version
-              sudo lixet --update            Update the installed Lixet version
-              lixet services                 Show supported services
-              lixet scan <service>           Scan one service
-              lixet scan <service> --dry-run Preview safe repairs without changing files
-              lixet scan <service> -y        Apply all supported safe repairs
-              lixet doctor                   Scan all supported services
-              lixet doctor --dry-run         Preview all supported repairs
-              lixet doctor -y                Apply proven safe repairs without prompting
-              lixet --no-color ...           Disable colored output
+            Commands:
+              scan        Scan a service or configuration file
+              doctor      Scan supported services
+              services    List supported services
+              backups     List protected backups
+              restore     Restore a protected backup
+
+            Common examples:
+              lixet scan ssh
+              lixet scan /etc/nginx/nginx.conf
+              lixet scan custom.conf --type nginx
+              lixet doctor
+              lixet backups
+              lixet restore <backup-id>
+              lixet --version
+              sudo lixet --update
 
             Supported services:
-              ssh, nginx, ufw, dns, networking, systemd, sudoers, fstab, sysctl
+              {services}
         """),
     )
     parser.add_argument("--update", action="store_true", help="Update the installed Lixet version")
     parser.add_argument("--version", action="store_true", help="Show installed and latest Lixet version")
     subparsers = parser.add_subparsers(dest="command", parser_class=Subparser)
 
-    scan_parser = subparsers.add_parser("scan", parents=[common], help="Analyze a specific service")
-    scan_parser.add_argument("service", help="Service to scan, e.g. ssh")
+    scan_parser = subparsers.add_parser("scan", parents=[common], help="Scan a service or configuration file")
+    scan_parser.add_argument("target", help="Service, alias, file, or supported directory to scan")
+    scan_parser.add_argument("--type", choices=service_names(), help="Explicit configuration type for a path target")
     scan_parser.add_argument("--config", help="Override service configuration path")
     scan_parser.add_argument("--dry-run", action="store_true", help="Preview repairs without modifying files")
     scan_parser.add_argument("-y", "--yes", action="store_true", help="Apply supported repairs without prompting")
@@ -104,6 +110,12 @@ def parse_and_execute(args: list[str]) -> int:
     doctor_parser.add_argument("-y", "--yes", action="store_true", help="Apply supported repairs without prompting")
 
     subparsers.add_parser("services", parents=[common], help="Show supported services")
+
+    subparsers.add_parser("backups", parents=[common], help="List protected backups")
+
+    restore_parser = subparsers.add_parser("restore", parents=[common], help="Restore a protected backup")
+    restore_parser.add_argument("backup_id", help="Backup ID to restore")
+    restore_parser.add_argument("--dry-run", action="store_true", help="Preview restore without modifying files")
 
     if not args:
         parser.print_help()
@@ -133,10 +145,19 @@ def parse_and_execute(args: list[str]) -> int:
         dry_run=getattr(parsed_args, "dry_run", False),
         yes=getattr(parsed_args, "yes", False),
         config_path=getattr(parsed_args, "config", None),
+        target_type=getattr(parsed_args, "type", None),
         no_color=getattr(parsed_args, "no_color", False),
     )
     if parsed_args.command == "scan":
-        return int(engine.scan_service(parsed_args.service))
+        if getattr(parsed_args, "config", None) and not getattr(parsed_args, "type", None):
+            return int(engine.scan_service(parsed_args.target))
+        return int(engine.scan(parsed_args.target))
     if parsed_args.command == "doctor":
         return int(engine.run_doctor())
-    return int(engine.show_services())
+    if parsed_args.command == "services":
+        return int(engine.show_services())
+    if parsed_args.command == "backups":
+        return int(engine.show_backups())
+    if parsed_args.command == "restore":
+        return int(engine.restore_backup(parsed_args.backup_id))
+    return int(ExitCode.USAGE)

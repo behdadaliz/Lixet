@@ -10,6 +10,7 @@ Lixet may inspect and modify security-sensitive Linux configuration. A contribut
 - Validators diagnose; they do not write files or run policy-changing commands.
 - Keep uncertain findings report-only.
 - Do not restart services, alter firewall rules, mount filesystems, or apply sysctl values.
+- Do not restart Fail2ban, alter Fail2ban firewall actions, or choose ban policy for the administrator.
 - Do not weaken snapshot, backup, transaction, verification, or updater checks to make a feature easier.
 - Preserve unrelated user changes and keep pull requests focused.
 
@@ -38,7 +39,7 @@ python -m mypy
 shellcheck install.sh uninstall.sh
 ```
 
-ShellCheck and Linux symlink behavior should also pass in GitHub Actions. No test may read or modify the host's real `/etc`, `/opt`, `/var/lib/lixet`, or `/usr/local/bin` paths.
+ShellCheck and Linux symlink behavior should also be checked on a Linux system. No test may read or modify the host's real `/etc`, `/opt`, `/var/lib/lixet`, or `/usr/local/bin` paths.
 
 ## Adding Or Changing A Service
 
@@ -46,9 +47,10 @@ ShellCheck and Linux symlink behavior should also pass in GitHub Actions. No tes
 2. Make filesystem roots and external commands injectable.
 3. Put deterministic diagnosis under `validators/`.
 4. Return the shared issue shape and include evidence and source commands when available.
-5. Register metadata in `core/engine.py` so `scan`, `doctor`, and `services` stay consistent.
-6. Add realistic temporary fixtures, failure cases, and distribution-specific cases when semantics differ.
-7. Update documentation only after behavior and tests are stable.
+5. Register metadata in `core/registry.py` so `scan`, `doctor`, `services`, and path detection stay consistent.
+6. Add deterministic path, filename, parent-directory, and bounded content signatures only when they are specific enough to avoid false positives.
+7. Add realistic temporary fixtures, failure cases, and distribution-specific cases when semantics differ.
+8. Update documentation only after behavior and tests are stable.
 
 Use official upstream documentation as the source of truth for OpenSSH, Nginx, systemd, sudo/visudo, util-linux/findmnt, procps/sysctl, UFW, and resolver semantics.
 
@@ -77,7 +79,13 @@ Use `TemporaryDirectory`, injected roots, fake command runners, fake release res
 
 Tests should cover healthy, broken, unavailable-tool, permission, concurrent-edit, interruption, rollback, and malicious-input paths. A repair test should assert both the intended change and preservation of unrelated bytes or metadata.
 
-When a platform cannot create real symlinks locally, keep a non-skipped simulation and rely on the Linux CI job for the real symlink path. Do not mark the platform-independent safety test as skipped.
+Diff-related changes must test plain output, colored output, no-color output, redirected/non-TTY behavior, line-ending preservation, and zero-write dry-runs.
+
+Backup restore changes must test dry-run, cancel, exact `RESTORE` confirmation, pre-restore backup creation, hash mismatch, invalid IDs, traversal attempts, and symlink behavior when the platform supports it.
+
+Fail2ban changes must avoid a generic strict INI parser. Test real Fail2ban-style includes, `.local` overrides, jail.d/filter.d/action.d paths, command-unavailable paths, authoritative `fail2ban-client -t` failures, and report-only behavior. Never add a Fail2ban safe repair without a separate safety design.
+
+When a platform cannot create real symlinks locally, keep a non-skipped simulation and verify the real symlink path on Linux. Do not mark the platform-independent safety test as skipped.
 
 Coverage must remain at or above the configured threshold. Raising raw coverage is not a substitute for meaningful failure-injection tests.
 
@@ -85,14 +93,18 @@ Coverage must remain at or above the configured threshold. Raising raw coverage 
 
 Installer and updater changes require phase failure injection. Never test them against real install paths.
 
-The updater accepts only versioned GitHub Release assets:
+The updater uses GitHub's automatic source archive for the selected published Release. Maintainers do not need to upload custom release files. The release tag and canonical `VERSION` content must agree under SemVer normalization. Do not add mutable branch fallback or silent downgrade behavior.
 
-```text
-lixet-<version>.zip
-lixet-<version>.zip.sha256
-```
+Release flow:
 
-`SHA256SUMS` is also accepted as the checksum asset, but it must contain an entry for the exact release archive name. The release tag, archive filename, and canonical `VERSION` content must agree under SemVer normalization. Do not add mutable branch fallback or silent downgrade behavior.
+1. Update `VERSION`.
+2. Commit and push the release code.
+<<<<<<< HEAD
+3. Create a GitHub tag such as `v0.3.0-beta`.
+=======
+3. Create a GitHub tag such as `v0.2.3-beta`.
+>>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
+4. Create and publish a GitHub Release from that tag.
 
 Do not bump `VERSION` repeatedly. Update it once after the full quality gate passes, then update `README.md`, `ARCHITECTURE.md`, and `CONTRIBUTING.md` if the behavior changed. Publishing a GitHub release is a separate maintainer action.
 

@@ -1,6 +1,6 @@
 # GitHub: https://github.com/behdadaliz/Lixet.git | Author: behdadaliz
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "wheel>=0.43"]
 build-backend = "setuptools.build_meta"
 
 [project]

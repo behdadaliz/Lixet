@@ -10,6 +10,7 @@ Describe the change and the problem it solves.
 - External commands used:
 - Repair level changed, if any:
 - Rollback or verifier impact:
+- Backup, restore, or detection impact:
 
 ## Tests
 

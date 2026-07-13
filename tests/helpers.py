@@ -36,14 +36,14 @@ class FakeRunner:
         return Path("/trusted") / command if command in self.available else None
 
 
-def create_owned_install(root: Path, version: str = "0.1.0") -> None:
+def create_owned_install(root: Path, version: str = "0.3.0-alpha") -> None:
     root.mkdir(parents=True)
     (root / "sentinel").write_text("old", encoding="utf-8")
     marker = {"schema": 1, "project": PROJECT_ID, "transaction_id": "old", "version": version}
     (root / MARKER_NAME).write_text(json.dumps(marker), encoding="utf-8")
 
 
-def create_source_tree(root: Path, version: str = "0.2.0-beta.1") -> None:
+def create_source_tree(root: Path, version: str = "0.3.0-beta") -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "VERSION").write_text(version + "\n", encoding="utf-8", newline="\n")
     (root / "main.py").write_text("print('source')\n", encoding="utf-8", newline="\n")

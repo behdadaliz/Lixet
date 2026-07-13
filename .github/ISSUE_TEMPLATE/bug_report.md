@@ -29,9 +29,10 @@ lixet ...
 
 ## Service or target
 
-- Service checked: ssh / nginx / ufw / dns / networking / systemd / sudoers / fstab / sysctl
+- Service checked: ssh / nginx / ufw / dns / networking / fail2ban / systemd / sudoers / fstab / sysctl
 - Config path or target file, if relevant:
 - Is the target a symlink? If yes, include `readlink` output after removing private paths:
+- Was this a backup listing or restore problem? If yes, include the backup ID format only, not private file contents:
 
 ## Expected behavior
 
@@ -43,6 +44,7 @@ What did Lixet do instead?
 
 - Exit code (`echo $?`):
 - Was a repair selected, dry-run used, or `-y` used?
+- Was `--type` used for a path scan?
 - Was a backup path printed?
 
 ## Terminal output

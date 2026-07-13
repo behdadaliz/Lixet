@@ -85,7 +85,7 @@ class VersionReporter:
         latest_version = str(latest.get("tag") or latest["version"]) if latest else "not available"
         status = _status(installed, latest_version, latest is not None)
         self.ui.banner("Lixet Version")
-        self._line("Installed version", installed)
+        self._line("Installed version", display_version(installed))
         self._line("Latest release", latest_version)
         self._line("Status", status)
         if latest and latest.get("url"):
@@ -141,6 +141,11 @@ def normalize_version(text: str) -> str | None:
 def version_key(text: str) -> SemVer | None:
     normalized = normalize_version(text)
     return parse_version(normalized) if normalized else None
+
+
+def display_version(text: str) -> str:
+    normalized = normalize_version(text)
+    return f"v{normalized}" if normalized else text
 
 
 def read_installed_version(root: Path | None = None) -> str:
