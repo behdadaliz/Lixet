@@ -252,6 +252,9 @@ class UpdaterContractTests(unittest.TestCase):
             version = "0.3.0-beta"
 =======
             version = "0.2.0-beta.2"
+<<<<<<< HEAD
+>>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
+=======
 >>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
             archive = b"release source archive"
             release = [

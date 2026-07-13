@@ -100,7 +100,11 @@ Release flow:
 1. Update `VERSION`.
 2. Commit and push the release code.
 <<<<<<< HEAD
+<<<<<<< HEAD
 3. Create a GitHub tag such as `v0.3.0-beta`.
+=======
+3. Create a GitHub tag such as `v0.2.3-beta`.
+>>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
 =======
 3. Create a GitHub tag such as `v0.2.3-beta`.
 >>>>>>> e2f7d4b804260f5b0e9def8f8e18a5d20b42ed23
