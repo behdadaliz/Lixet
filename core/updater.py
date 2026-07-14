@@ -19,6 +19,7 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
 from core.install_transaction import InstallError, InstallRollbackError, InstallTransaction
+from core.layout import DEFAULT_LAYOUT
 from core.models import ExitCode
 from core.version import SemVer, display_version, read_installed_version, select_latest_release, version_key
 from utils.ui import UI
@@ -33,9 +34,9 @@ class UpdateNotNeeded(UpdateError):
 
 
 class LixetUpdater:
-    INSTALL_DIR = Path("/opt/lixet")
-    BIN_PATH = Path("/usr/local/bin/lixet")
-    LOCK_PATH = Path("/run/lock/lixet/update.lock")
+    INSTALL_DIR = DEFAULT_LAYOUT.install_dir
+    BIN_PATH = DEFAULT_LAYOUT.bin_path
+    LOCK_PATH = DEFAULT_LAYOUT.update_lock
     RELEASES_URL = "https://api.github.com/repos/behdadaliz/Lixet/releases?per_page=50"
     MAX_METADATA = 1024 * 1024
     MAX_DOWNLOAD = 20 * 1024 * 1024

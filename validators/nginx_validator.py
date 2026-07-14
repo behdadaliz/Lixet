@@ -40,6 +40,11 @@ class NginxValidator:
         issues: list[dict] = []
         self._check_includes(data, issues)
         self._check_config_test(data, issues)
+        test = data.get("config_test")
+        if test and test.get("returncode") == 0:
+            return issues
+        if test and test.get("returncode") != 0:
+            return issues
         self._check_braces(rows, issues)
         self._check_semicolons(rows, issues)
         self._check_worker_processes(rows, issues)

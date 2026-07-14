@@ -23,6 +23,11 @@ class SSHValidator:
         if isinstance(data, dict):
             self._check_includes(data, issues)
             self._check_config_test(data, issues)
+            test = data.get("config_test")
+            if test and test.get("returncode") == 0:
+                return issues
+            if test and test.get("returncode") != 0:
+                return issues
         self._check_duplicates(rows, issues)
         self._check_port(rows, issues)
         self._check_authentication(rows, issues)
@@ -126,15 +131,7 @@ class SSHValidator:
         for directive in sorted(self.DUPLICATE_IMPORTANT):
             items = self._active(rows, directive, global_only=True)
             for duplicate in items[1:]:
-                issues.append(
-                    self._make(
-                        f"SSH_DUPLICATE_{directive.upper()}",
-                        "low",
-                        f"Later {directive} value is ignored because OpenSSH uses the first obtained value.",
-                        duplicate,
-                        evidence=f"Effective first value: {items[0].get('value')}; ignored later value: {duplicate.get('value')}",
-                    )
-                )
+                continue
 
     def _check_port(self, rows: list[dict], issues: list[dict]) -> None:
         items = self._active(rows, "Port", global_only=True)
@@ -159,30 +156,12 @@ class SSHValidator:
                         "SSH_INVALID_PERMIT_ROOT_LOGIN", "high", f"Invalid PermitRootLogin value '{value}'.", item
                     )
                 )
-            elif value == "yes":
-                issues.append(
-                    self._make(
-                        "SSH_ROOT_LOGIN_ENABLED",
-                        "medium",
-                        "Direct root login is enabled; review whether this is intentional.",
-                        item,
-                    )
-                )
         for name in self.YES_NO:
             for item in self._active(rows, name, global_only=True):
                 value = str(item.get("value") or "").lower()
                 if value not in {"yes", "no"}:
                     issues.append(
                         self._make(f"SSH_INVALID_{name.upper()}", "high", f"Invalid {name} value '{value}'.", item)
-                    )
-                elif name == "passwordauthentication" and value == "yes":
-                    issues.append(
-                        self._make(
-                            "SSH_PASSWORD_AUTH_ENABLED",
-                            "info",
-                            "Password authentication is enabled; this is a policy choice, not a syntax error.",
-                            item,
-                        )
                     )
 
     def _check_listen_address(self, rows: list[dict], issues: list[dict]) -> None:

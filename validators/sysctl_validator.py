@@ -51,23 +51,6 @@ class SysctlValidator:
                         )
                     )
 
-        for key, items in assignments.items():
-            if len(items) < 2:
-                continue
-            effective = items[-1]
-            evidence = "\n".join(
-                f"load {item['order']}: {item['path']}:{item['line']}: {key} = {item['value']}" for item in items
-            )
-            previous = items[-2]["value"]
-            description = (
-                f"sysctl key '{key}' is layered {len(items)} times; previous value '{previous}', "
-                f"effective value '{effective['value']}'."
-            )
-            issues.append(
-                self._make(
-                    "SYSCTL_EFFECTIVE_OVERRIDE", "info", description, effective["path"], effective["row"], evidence
-                )
-            )
         return issues
 
     def _make(

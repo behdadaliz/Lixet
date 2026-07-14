@@ -183,9 +183,10 @@ class EngineTests(unittest.TestCase):
             text = output.getvalue()
             self.assertEqual(code, ExitCode.ISSUES)
             self.assertIn("networking", text)
-            self.assertIn("configuration missing", text)
-            self.assertIn("unsupported environment", text)
+            self.assertIn("CONFIG_NOT_FOUND", text)
+            self.assertIn("not installed", text)
             self.assertNotIn("No issues detected in completed checks", text)
+            self.assertTrue(list((root / "logs").glob("doctor-*.log")))
 
     def test_exit_code_contract_for_usage_inspection_repair_and_rollback(self) -> None:
         engine = LixetEngine(no_color=True, runner=FakeRunner(), ui=UI(no_color=True, stdin=io.StringIO("")))

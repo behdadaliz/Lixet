@@ -8,7 +8,7 @@ Lixet may inspect and modify security-sensitive Linux configuration. A contribut
 - Prefer the Python standard library for runtime code.
 - Never use the inherited `PATH` for system inspection commands.
 - Validators diagnose; they do not write files or run policy-changing commands.
-- Keep uncertain findings report-only.
+- Prefer false negatives over noisy false positives. Low-confidence guesses should not be visible problems.
 - Do not restart services, alter firewall rules, mount filesystems, or apply sysctl values.
 - Do not restart Fail2ban, alter Fail2ban firewall actions, or choose ban policy for the administrator.
 - Do not weaken snapshot, backup, transaction, verification, or updater checks to make a feature easier.
@@ -56,7 +56,7 @@ Use official upstream documentation as the source of truth for OpenSSH, Nginx, s
 
 ## Findings And Repair Levels
 
-Every finding includes a unique `id`, stable `code`, severity, service, location, evidence, safety notes, repair level, and zero or more exact fixes.
+Every finding includes a unique `id`, stable `code`, severity, service, location, evidence, safety notes, confidence, repair level, and zero or more exact fixes.
 
 - `safe`: deterministic and narrowly scoped, with focused regression coverage. It may be approved by `-y`.
 - `guarded`: sensitive, exact, reversible, and externally verifiable. It requires typing `APPLY` interactively.
@@ -71,7 +71,7 @@ Do not label a repair safe because it is common. Prove that:
 - post-repair inspection removes the finding without introducing an equal-or-higher-severity issue;
 - a required authoritative verifier is available and passes.
 
-The main sudoers file, firewall policy, DNS provider choice, mount behavior, sysctl policy, SSH authentication policy, and service behavior should remain report-only unless a future design proves stronger guarantees.
+The main sudoers file, firewall policy, DNS provider choice, mount behavior, sysctl policy, SSH authentication policy, and service behavior should remain report-only unless a future design proves stronger guarantees. Normal state such as inactive UFW, managed DNS, valid sysctl layering, and unused stock configuration libraries should not be reported as broken.
 
 ## Tests
 
@@ -83,7 +83,9 @@ Diff-related changes must test plain output, colored output, no-color output, re
 
 Backup restore changes must test dry-run, cancel, exact `RESTORE` confirmation, pre-restore backup creation, hash mismatch, invalid IDs, traversal attempts, and symlink behavior when the platform supports it.
 
-Fail2ban changes must avoid a generic strict INI parser. Test real Fail2ban-style includes, `.local` overrides, jail.d/filter.d/action.d paths, command-unavailable paths, authoritative `fail2ban-client -t` failures, and report-only behavior. Never add a Fail2ban safe repair without a separate safety design.
+Fail2ban changes must avoid a generic strict INI parser. Test real Fail2ban-style includes, `.local` overrides, jail.d/filter.d/action.d paths, command-unavailable paths, authoritative `fail2ban-client -t` success/failure, and report-only behavior. Clean stock filter files must not create duplicate-option floods. Never add a Fail2ban safe repair without a separate safety design.
+
+Doctor logging changes must test redaction, no ANSI output, fallback directories, retention, and backup preservation. Uninstall changes must test dry-run, cancellation, explicit `UNINSTALL`, idempotency, unowned-target refusal, and preservation of `/var/lib/lixet/backups`.
 
 When a platform cannot create real symlinks locally, keep a non-skipped simulation and verify the real symlink path on Linux. Do not mark the platform-independent safety test as skipped.
 
@@ -91,7 +93,7 @@ Coverage must remain at or above the configured threshold. Raising raw coverage 
 
 ## Installer And Release Changes
 
-Installer and updater changes require phase failure injection. Never test them against real install paths.
+Installer, updater, and uninstaller changes require phase failure injection. Never test them against real install paths.
 
 The updater uses GitHub's automatic source archive for the selected published Release. Maintainers do not need to upload custom release files. The release tag and canonical `VERSION` content must agree under SemVer normalization. Do not add mutable branch fallback or silent downgrade behavior.
 

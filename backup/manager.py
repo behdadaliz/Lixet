@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from repair.snapshot import FileSnapshot, SnapshotError, capture_snapshot
+from core.layout import DEFAULT_LAYOUT
 from utils.ui import UI
 
 
@@ -36,7 +37,7 @@ class BackupListItem:
 class BackupManager:
     """Create protected manifest-based backups outside configuration trees."""
 
-    DEFAULT_DIR = Path("/var/lib/lixet/backups")
+    DEFAULT_DIR = DEFAULT_LAYOUT.backup_dir
     ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}$")
 
     def __init__(self, backup_dir: str | Path | None = None) -> None:

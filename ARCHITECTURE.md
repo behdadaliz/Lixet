@@ -7,7 +7,7 @@ Lixet separates inspection, diagnosis, authorization, mutation, and verification
 ```text
 backup/       Protected backup bundles and restore verification
 cli/          Argument parsing and command dispatch
-core/         Engine, registry, detector, typed models, versioning, installer, and updater
+core/         Engine, registry, detector, typed models, layout, logging, installer, updater, and uninstaller
 repair/       Snapshots, exact text edits, locking, and transactions
 services/     File discovery and trusted local command inspection
 utils/        Command runner, terminal UI, diff, and selection helpers
@@ -41,7 +41,9 @@ For `lixet scan <service>`:
 13. Any failure or interruption rolls the complete repair group back in reverse order. Rollback failure has its own exit code and is never hidden.
 14. The engine performs a final service rescan before returning.
 
-`lixet doctor` runs the same inspection path for every registered service without sharing a custom configuration path. It reports each service as checked, not installed, configuration absent, configuration missing, unsupported, or failed. A required skipped or failed check cannot result in a healthy exit. Interactive doctor uses `utils/selection.py` for numbers, lists, ranges, all-safe selection, rescan, quit, and EOF-safe aborts.
+`lixet doctor` runs the same inspection path for every registered service without sharing a custom configuration path. It reports each service as checked, not installed, configuration absent, configuration missing, unsupported, or failed. Normal output groups findings by service and separates informational observations from high-confidence problems. Interactive doctor uses `utils/selection.py` for numbers, lists, ranges, all-safe selection, rescan, quit, and EOF-safe aborts.
+
+Every completed Doctor run writes a redacted plain-text log through `core/doctor_log.py`. The default directory is `/var/log/lixet`, with a safe state-directory fallback when needed. Logs use restrictive permissions where supported, contain no ANSI color codes, include validator availability and grouped findings, and keep only the newest 20 Doctor logs. Log cleanup never touches backups.
 
 ## Service Registry And Detection Foundation
 
@@ -74,6 +76,8 @@ Aliases are resolved before lookup. Runtime systemd inspection still runs when `
 
 Issue IDs include stable issue identity data and are not only repeated rule codes. Repair actions include expected original line or end-of-file content. Supported actions are:
 
+The visible diagnosis policy prefers false negatives over false positives. Normal state, optional hardening, inactive optional services, managed resolver ownership, valid sysctl layering, and unused stock configuration libraries are not reported as problems. Low-confidence internal guesses are dropped before display.
+
 - `append`
 - `append_token`
 - `replace`
@@ -96,7 +100,7 @@ Current metadata preservation covers mode, uid, gid, and timestamps where the op
 
 ## Backups And Transactions
 
-`BackupManager` stores bundles under `/var/lib/lixet/backups` by default. Tests inject a temporary directory.
+`BackupManager` stores bundles under `/var/lib/lixet/backups` by default. Tests inject a temporary directory. `core/layout.py` is the shared source of install, state, backup, log, and lock paths.
 
 Each collision-resistant bundle contains:
 
@@ -134,18 +138,20 @@ Other commands such as `ufw`, `ip`, `systemctl`, and `resolvectl` provide read-o
 
 - **SSH:** follows includes with cycle, depth, and file bounds; applies first-obtained-value semantics; treats hardening as policy; never auto-disables root or password access. Only one exact `sshd`-rejected directive may become guarded.
 - **Nginx:** follows exact includes with bounds; handwritten brace and semicolon checks are quote/comment aware and report-only; `nginx -t` is authoritative.
-- **DNS:** detects managed resolver setups and containers; performs no external lookup; never inserts a universal fallback resolver.
+- **DNS:** detects managed resolver setups and containers; performs no external lookup; never inserts a universal fallback resolver. Managed resolver ownership is not a problem by itself.
 - **Networking:** validates address fields and runtime permission errors separately. Only standard localhost recovery is safe.
-- **UFW:** reads state and defaults from their proper files, respects last-assignment semantics, and keeps policy/startup changes report-only. It executes no firewall-changing command.
+- **UFW:** reads state and defaults from their proper files and keeps policy/startup changes report-only. An inactive firewall is not treated as broken. It executes no firewall-changing command.
 - **systemd:** inspects runtime failures independently of local units, reads drop-ins, accepts optional `[Unit]` and valid oneshot forms, and keeps behavior changes report-only.
-- **Fail2ban:** reads Fail2ban roots and files, follows bounded `[INCLUDES]` `before` and `after` references, checks `fail2ban-client -t` and `status` when available, reports static syntax problems, missing includes, cycles, missing enabled filters, and runtime failures. It never restarts Fail2ban, changes firewall rules, rewrites actions, or changes ban policy. Exact verifier-rejected override lines may become guarded only when they are not packaged defaults.
+- **Fail2ban:** reads Fail2ban roots and local overrides, follows bounded `[INCLUDES]` `before` and `after` references, and treats `fail2ban-client -t` as authoritative when available. Successful native validation suppresses stock-library parser findings. It never restarts Fail2ban, changes firewall rules, rewrites actions, or changes ban policy. Exact verifier-rejected override lines may become guarded only when they are not packaged defaults.
 - **sudoers:** trusts `visudo`; the main file is never automatically repaired. One exact included-file syntax line may become guarded.
 - **fstab:** uses `findmnt`, parses escaped whitespace, and never runs `mount -a`. Findings are report-only.
-- **sysctl:** models directory/file precedence and `/etc/sysctl.conf`, reports complete override evidence, and never changes or applies kernel policy automatically.
+- **sysctl:** validates assignments that Lixet can prove are malformed and never treats normal directory/file override precedence as breakage. It never changes or applies kernel policy automatically.
 
 ## Installer And Updater
 
 `InstallTransaction` is shared by `install.py` and the updater. It validates exact required file types, writes an ownership marker, stages into a unique directory, preserves the previous installation and command entry, and restores both after failures. It removes only staging and backup paths created by its transaction.
+
+`lixet uninstall` uses `core/uninstaller.py` and the shared layout. It removes only proven Lixet-owned installed files, command links, logs, locks, and runtime cache. It requires typing `UNINSTALL` unless running `--dry-run`, refuses unowned install targets, does not follow symlinks during removal, and preserves `/var/lib/lixet/backups`.
 
 The updater selects a newer published GitHub Release from the installed stable or prerelease channel. It has no branch fallback. It downloads GitHub's automatic `zipball_url` source archive, extracts it into a temporary directory, validates paths and file types, checks that `VERSION` matches the release tag after SemVer normalization, then runs compile and CLI smoke checks before the install transaction begins. Downloads and extraction are bounded; path traversal, duplicate paths, symlinks, special files, oversized content, mismatched versions, same-version reinstalls, and downgrades are rejected.
 

@@ -40,7 +40,7 @@ class ValidatorTests(unittest.TestCase):
         issues = SSHValidator("/tmp/sshd_config").run_rules({"lines": rows, "config_test": {"returncode": 0}})
         self.assertFalse(any(item["repairable"] for item in issues))
 
-    def test_ufw_duplicates_preserve_last_effective_values(self) -> None:
+    def test_ufw_duplicates_are_not_reported_as_breakage(self) -> None:
         data = {
             "files": [
                 {"role": "state", "file_path": "/tmp/ufw.conf", "lines": [row(1, "ENABLED=no"), row(2, "ENABLED=yes")]},
@@ -58,27 +58,17 @@ class ValidatorTests(unittest.TestCase):
             "ufw_status": None,
         }
         issues = UFWValidator().run_rules(data)
-        duplicates = [item for item in issues if item["code"].startswith("UFW_DUPLICATE_")]
-        self.assertEqual(
-            {item["code"] for item in duplicates},
-            {"UFW_DUPLICATE_ENABLED", "UFW_DUPLICATE_IPV6", "UFW_DUPLICATE_DEFAULT_INPUT_POLICY"},
-        )
-        self.assertFalse(any(item["repairable"] for item in duplicates))
-        self.assertTrue(all("last assignment is effective" in item["description"] for item in duplicates))
+        self.assertFalse(any(item["code"].startswith("UFW_DUPLICATE_") for item in issues))
 
-    def test_sysctl_override_evidence_lists_sources_and_effective_value(self) -> None:
+    def test_sysctl_override_is_not_reported_as_breakage(self) -> None:
         data = {
             "files": [
                 {"file_path": "/usr/lib/sysctl.d/10-base.conf", "load_order": 1, "lines": [row(1, "vm.swappiness=60")]},
                 {"file_path": "/etc/sysctl.d/90-local.conf", "load_order": 2, "lines": [row(4, "vm.swappiness=10")]},
             ]
         }
-        issue = next(item for item in SysctlValidator().run_rules(data) if item["code"] == "SYSCTL_EFFECTIVE_OVERRIDE")
-        self.assertIn("previous value '60'", issue["description"])
-        self.assertIn("effective value '10'", issue["description"])
-        self.assertIn("load 1", issue["evidence"])
-        self.assertIn("load 2", issue["evidence"])
-        self.assertFalse(issue["repairable"])
+        issues = SysctlValidator().run_rules(data)
+        self.assertFalse(any(item["code"] == "SYSCTL_EFFECTIVE_OVERRIDE" for item in issues))
 
     def test_fstab_parses_escaped_whitespace(self) -> None:
         data = {"lines": [row(1, "/dev/sda1 /mnt/my\\040disk ext4 defaults 0 2")], "findmnt_verify": {"returncode": 0}}

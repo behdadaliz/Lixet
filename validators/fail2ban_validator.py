@@ -21,8 +21,11 @@ class Fail2banValidator:
 
     def run_rules(self, data: dict) -> list[dict]:
         issues: list[dict] = []
-        self._include_errors(data, issues)
         self._authoritative_test(data, issues)
+        test = data.get("config_test")
+        if test and test.get("returncode") == 0:
+            return issues
+        self._include_errors(data, issues)
         sections = self._parse_files(data, issues)
         self._enabled_filters(data, sections, issues)
         self._runtime(data.get("runtime_status"), issues)
@@ -72,13 +75,6 @@ class Fail2banValidator:
     def _authoritative_test(self, data: dict, issues: list[dict]) -> None:
         result = data.get("config_test")
         if result is None:
-            issues.append(
-                self._make(
-                    "FAIL2BAN_VERIFIER_UNAVAILABLE",
-                    "info",
-                    "fail2ban-client is unavailable; authoritative Fail2ban validation was not run.",
-                )
-            )
             return
         if result.get("returncode") == 0:
             return
@@ -116,10 +112,11 @@ class Fail2banValidator:
 
     def _parse_files(self, data: dict, issues: list[dict]) -> dict[str, dict[str, dict]]:
         sections: dict[str, dict[str, dict]] = {}
-        seen_sections: set[tuple[str, str]] = set()
         for file_data in data.get("files", []):
             current: str | None = None
             file_path = str(file_data.get("file_path") or self.file_path)
+            if not self._user_override(file_path) and Path(file_path).name not in {"jail.local", "fail2ban.local"}:
+                continue
             for row in file_data.get("lines", []):
                 text = str(row.get("text") or "")
                 if not row.get("is_active"):
@@ -130,10 +127,6 @@ class Fail2banValidator:
                         current = None
                         continue
                     current = text[1:-1].strip()
-                    key = (file_path, current.lower())
-                    if key in seen_sections:
-                        issues.append(self._make("FAIL2BAN_DUPLICATE_SECTION", "info", f"Section [{current}] appears more than once in one file; later values may override earlier ones.", file_path, row))
-                    seen_sections.add(key)
                     sections.setdefault(current.lower(), {"name": current, "options": {}, "path": file_path})
                     continue
                 if "=" not in text or current is None:
@@ -146,8 +139,6 @@ class Fail2banValidator:
                 clean_value = value.strip()
                 section = sections.setdefault(current.lower(), {"name": current, "options": {}, "path": file_path})
                 options = section["options"]
-                if option in options:
-                    issues.append(self._make("FAIL2BAN_DUPLICATE_OPTION", "info", f"Option '{option}' appears more than once in section [{current}]; the last value is effective.", file_path, row))
                 options[option] = {"value": clean_value, "row": row, "path": file_path}
                 self._validate_value(option, clean_value, file_path, row, issues)
         return sections
@@ -192,7 +183,6 @@ class Fail2banValidator:
 
     def _runtime(self, result: dict | None, issues: list[dict]) -> None:
         if result is None:
-            issues.append(self._make("FAIL2BAN_COMMAND_UNAVAILABLE", "info", "fail2ban-client status is unavailable."))
             return
         evidence = str(result.get("evidence") or "")
         if result.get("returncode") != 0:
@@ -205,16 +195,7 @@ class Fail2banValidator:
                     command=result.get("command"),
                 )
             )
-        elif "jail list:" in evidence.lower() and not evidence.split("Jail list:", 1)[-1].strip():
-            issues.append(
-                self._make(
-                    "FAIL2BAN_NO_ACTIVE_JAILS",
-                    "info",
-                    "Fail2ban reports no active jails.",
-                    evidence=evidence,
-                    command=result.get("command"),
-                )
-            )
+        return
 
     @classmethod
     def _location(cls, evidence: str) -> tuple[str | None, int | None]:
@@ -246,7 +227,5 @@ class Fail2banValidator:
             return False
         candidate = Path(path)
         if candidate.name in {"jail.conf", "fail2ban.conf"}:
-            return False
-        if "filter.d" in candidate.parts or "action.d" in candidate.parts:
             return False
         return candidate.suffix == ".local" or "jail.d" in candidate.parts

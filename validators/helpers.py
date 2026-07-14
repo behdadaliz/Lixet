@@ -30,6 +30,9 @@ def issue(
     repair_level: str | None = None,
     risk_note: str | None = None,
     rollback_note: str | None = None,
+    actionable: bool | None = None,
+    confidence: str = "high",
+    validator_result: str | None = None,
 ) -> dict:
     level = repair_level or (RepairLevel.SAFE.value if fixes else RepairLevel.REPORT_ONLY.value)
     if level == "report-only":
@@ -57,6 +60,9 @@ def issue(
         "rollback_note": rollback_note,
         "source_command": source_command,
         "fixes": clean_fixes,
+        "actionable": repairable if actionable is None else actionable,
+        "confidence": confidence if confidence in {"high", "medium", "low"} else "low",
+        "validator_result": validator_result,
     }
 
 

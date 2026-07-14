@@ -8,6 +8,7 @@ from pathlib import Path
 
 from backup.manager import BackupError, BackupManager, RollbackError
 from core.detector import DetectionResult, DetectionStatus, TargetDetector
+from core.doctor_log import DoctorLogWriter
 from core.models import ExitCode, VerificationResult, VerificationState
 from core.registry import aliases, get_service, iter_services, resolve_service_name, service_names
 from repair.manager import RepairError, RepairManager
@@ -46,6 +47,8 @@ class LixetEngine:
         no_color: bool = False,
         backup_dir: str | Path | None = None,
         lock_dir: str | Path = "/run/lock/lixet",
+        doctor_log_dir: str | Path | None = None,
+        doctor_log_keep: int = 20,
         filesystem_root: str | Path | None = None,
         runner: CommandExecutor | None = None,
         ui: UI | None = None,
@@ -58,12 +61,15 @@ class LixetEngine:
         self.runner = runner or CommandRunner()
         self.ui = ui or UI(no_color=no_color)
         self.backup_manager = BackupManager(backup_dir)
+        fallback_logs = self.backup_manager.backup_dir.parent / "logs"
+        self.doctor_log = DoctorLogWriter(doctor_log_dir, fallback_logs, keep=doctor_log_keep)
         self.repair_manager = RepairManager()
         self.transaction = RepairTransaction(self.backup_manager, self.repair_manager, lock_dir)
         self.detector = TargetDetector()
         self._last: dict[str, InspectionResult] = {}
         self.aliases = aliases()
         self.supported_services = {item.name: item.engine_spec() for item in iter_services()}
+        self._doctor_repairs: list[str] = []
         if self.dry_run:
             self.ui.status("warn", "Dry run enabled. No files or backups will be created.")
 
@@ -178,27 +184,28 @@ class LixetEngine:
             self.config_path = old
 
     def run_doctor(self) -> ExitCode:
+        self._doctor_repairs = []
+        session: dict = {"repairs": self._doctor_repairs}
         while True:
             self.ui.banner("Lixet Doctor", "Scanning supported services")
             results = [self._inspect(name, doctor=True) for name in self.supported_services]
-            items = self._sort_items([(result.service, item) for result in results for item in result.issues])
-            self._doctor_summary(results, items)
-            for index, (service, item) in enumerate(items, start=1):
-                self.ui.issue(index, service, item)
+            all_items = self._sort_items([(result.service, item) for result in results for item in result.issues])
+            items = [(service, item) for service, item in all_items if self._is_problem(item)]
+            observations = [(service, item) for service, item in all_items if not self._is_problem(item)]
+            summary = self._doctor_summary(results, items, observations)
+            self._show_grouped_items(items, observations)
+            session.update({"results": results, "items": items, "observations": observations, "summary": summary})
 
             if any(result.status == "failed" for result in results):
-                return ExitCode.INSPECTION_FAILED
+                return self._finish_doctor(session, ExitCode.INSPECTION_FAILED)
             if not items:
-                incomplete = [result for result in results if result.status != "checked"]
-                if incomplete:
-                    self.ui.status("warn", "Doctor completed with checks that were not run.")
-                    return ExitCode.ISSUES
                 self.ui.status("ok", "No issues detected in completed checks.")
-                return ExitCode.OK
+                return self._finish_doctor(session, ExitCode.OK)
             result = self._offer_repairs(items, doctor=True)
             if result == ExitCode.OK:
+                self._doctor_repairs.append("Rescan requested after repair selection.")
                 continue
-            return result
+            return self._finish_doctor(session, result)
 
     def _inspect(self, service_name: str, custom_path: str | None = None, doctor: bool = False) -> InspectionResult:
         spec = self.supported_services[service_name]
@@ -207,7 +214,7 @@ class LixetEngine:
             service = spec["service"](config_path=path, runner=self.runner)
             data = service.inspect()
             validator = spec["validator"](file_path=path)
-            issues = self._sort_issues(validator.run_rules(data))
+            issues = self._sort_issues(self._normalize_issues(validator.run_rules(data)))
             snapshots = self._snapshots(data)
             self._attach_snapshot_details(issues, snapshots)
             status = "checked"
@@ -248,6 +255,8 @@ class LixetEngine:
         repairable = [(service, item) for service, item in items if self._is_repairable(item)]
         if not repairable:
             self.ui.status("info", "No automatic repairs are available for the detected issues.")
+            if doctor:
+                self._doctor_repairs.append("No automatic repairs were available.")
             return ExitCode.ISSUES
         if self.dry_run:
             return self._preview(repairable)
@@ -272,9 +281,12 @@ class LixetEngine:
         selection = parse_selection(choice, len(items))
         if selection.action in {SelectionAction.EMPTY, SelectionAction.QUIT}:
             self.ui.status("info", "Repair aborted by user.")
+            if doctor:
+                self._doctor_repairs.append("Repair selection canceled.")
             return ExitCode.ISSUES
         if selection.action == SelectionAction.RESCAN:
             if doctor:
+                self._doctor_repairs.append("User requested rescan.")
                 return ExitCode.OK
             self.ui.status("info", "Rescan is available from doctor sessions.")
             return ExitCode.ISSUES
@@ -296,9 +308,13 @@ class LixetEngine:
                 selected.append((service, item))
         if not selected:
             self.ui.status("info", "No selected issue has an automatic repair.")
+            if doctor:
+                self._doctor_repairs.append("Selected issues had no automatic repair.")
             return ExitCode.ISSUES
         approved = self._authorize(selected)
         if not approved:
+            if doctor:
+                self._doctor_repairs.append("No repair was approved.")
             return ExitCode.ISSUES
         result = self._execute_repairs(approved)
         if doctor and result in {ExitCode.OK, ExitCode.ISSUES}:
@@ -332,23 +348,30 @@ class LixetEngine:
             self.ui.status("error", f"Cannot preview repairs: {exc}")
             return ExitCode.REPAIR_FAILED
         self.ui.status("warn", "Dry-run complete. No files or backups were created.")
+        self._doctor_repairs.append(f"Dry-run previewed {len(items)} repairable finding(s).")
         return ExitCode.ISSUES
 
     def _execute_repairs(self, items: list[tuple[str, dict]]) -> ExitCode:
         if not items:
             return ExitCode.ISSUES
         try:
+            self._doctor_repairs.append(
+                "Attempting repairs: " + ", ".join(str(item.get("code")) for _service, item in items)
+            )
             plans = self._plans(items)
             for plan in plans:
                 self._show_plan_diff(plan)
             result = self.transaction.execute(plans, lambda: self._verify_items(items))
         except RollbackError as exc:
             self.ui.status("critical", str(exc))
+            self._doctor_repairs.append(f"Repair rollback failed: {exc}")
             return ExitCode.ROLLBACK_FAILED
         except (RepairError, SnapshotError, TransactionError) as exc:
             self.ui.status("error", f"Repair transaction failed: {exc}")
+            self._doctor_repairs.append(f"Repair failed: {exc}")
             return ExitCode.REPAIR_FAILED
         self.ui.status("ok", f"Repair transaction completed: {result.verification.state.value}.")
+        self._doctor_repairs.append(f"Repair completed: {result.verification.state.value}.")
         for backup in result.backups:
             self.ui.kv("Backup", backup)
         return self._rescan_after_repair({service for service, _item in items})
@@ -543,19 +566,84 @@ class LixetEngine:
         self.ui.kv("Issues", self._count_text(result.issues))
         if result.message and result.status != "checked":
             self.ui.kv("Detail", result.message)
-        if result.issues:
-            self.ui.kv("Repairable", self._repairable_text(result.issues))
-            self.ui.section(f"Found {len(result.issues)} issue(s)")
-            for index, item in enumerate(result.issues, start=1):
+        problems = [item for item in result.issues if self._is_problem(item)]
+        observations = [item for item in result.issues if not self._is_problem(item)]
+        if problems:
+            self.ui.kv("Repairable", self._repairable_text(problems))
+            self.ui.section(f"Found {len(problems)} issue(s)")
+            for index, item in enumerate(problems, start=1):
                 self.ui.issue(index, result.service, item)
+        if observations:
+            self.ui.section("Informational Observations")
+            for item in observations:
+                self.ui.issue(None, result.service, item)
 
-    def _doctor_summary(self, results: list[InspectionResult], items: list[tuple[str, dict]]) -> None:
+    def _doctor_summary(
+        self,
+        results: list[InspectionResult],
+        items: list[tuple[str, dict]],
+        observations: list[tuple[str, dict]],
+    ) -> dict:
+        skipped = [result for result in results if result.status != "checked" and not result.issues]
+        summary = {
+            "services_checked": sum(1 for result in results if result.status == "checked"),
+            "services_skipped": len(skipped),
+            "errors": sum(1 for _service, item in items if str(item.get("severity")).lower() in {"critical", "high"}),
+            "warnings": sum(1 for _service, item in items if str(item.get("severity")).lower() in {"medium", "low"}),
+            "observations": len(observations),
+            "safe": sum(1 for _service, item in items if item.get("repair_level") == "safe" and self._is_repairable(item)),
+            "guarded": sum(
+                1 for _service, item in items if item.get("repair_level") == "guarded" and self._is_repairable(item)
+            ),
+            "report_only": sum(1 for _service, item in items if not self._is_repairable(item)),
+        }
         self.ui.section("Doctor Summary")
-        for result in results:
-            detail = f" - {result.message}" if result.message else ""
-            self.ui.kv(result.service, f"{result.status}{detail}")
-        self.ui.kv("Issues found", self._count_text([item for _service, item in items]))
-        self.ui.kv("Repairable", self._repairable_text([item for _service, item in items]))
+        self.ui.kv("Services checked", str(summary["services_checked"]))
+        self.ui.kv("Services skipped", str(summary["services_skipped"]))
+        self.ui.kv("Errors", str(summary["errors"]))
+        self.ui.kv("Warnings", str(summary["warnings"]))
+        self.ui.kv("Info", str(summary["observations"]))
+        self.ui.kv("Safe repairs", str(summary["safe"]))
+        self.ui.kv("Guarded repairs", str(summary["guarded"]))
+        self.ui.kv("Report-only", str(summary["report_only"]))
+        if skipped:
+            self.ui.section("Skipped Services")
+            for result in skipped:
+                detail = f" - {result.message}" if result.message else ""
+                self.ui.kv(result.service, f"{result.status}{detail}")
+        return summary
+
+    def _show_grouped_items(self, items: list[tuple[str, dict]], observations: list[tuple[str, dict]]) -> None:
+        if items:
+            self.ui.section(f"Found {len(items)} issue(s)")
+            grouped: dict[str, list[dict]] = {}
+            for service, item in items:
+                grouped.setdefault(service, []).append(item)
+            index = 1
+            for service in self.supported_services:
+                group = grouped.get(service, [])
+                if not group:
+                    continue
+                print(self.ui.c(f"\n[{service}]", self.ui.BOLD + self.ui.CYAN))
+                for item in group:
+                    self.ui.issue(index, service, item)
+                    index += 1
+        if observations:
+            self.ui.section("Informational Observations")
+            grouped_obs: dict[str, list[dict]] = {}
+            for service, item in observations:
+                grouped_obs.setdefault(service, []).append(item)
+            for service in self.supported_services:
+                for item in grouped_obs.get(service, []):
+                    self.ui.issue(None, service, item)
+
+    def _finish_doctor(self, session: dict, code: ExitCode) -> ExitCode:
+        path, warning = self.doctor_log.write(session)
+        if warning:
+            self.ui.status("warn", warning)
+        if path:
+            self.ui.status("info", f"Doctor log saved: {path}")
+        return code
 
     def _system_path(self, path: str) -> str:
         if self.filesystem_root is None:
@@ -667,6 +755,22 @@ class LixetEngine:
         return sorted(issues, key=cls._issue_key)
 
     @classmethod
+    def _normalize_issues(cls, issues: list[dict]) -> list[dict]:
+        found: dict[tuple[str, str, str, int, str], dict] = {}
+        for item in issues:
+            if str(item.get("confidence", "high")) == "low":
+                continue
+            key = (
+                str(item.get("service") or ""),
+                str(item.get("code") or ""),
+                str(Path(item.get("file_path") or "").absolute()),
+                int(item.get("line_number") or 0),
+                str(item.get("evidence") or ""),
+            )
+            found.setdefault(key, item)
+        return list(found.values())
+
+    @classmethod
     def _sort_items(cls, items: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
         return sorted(items, key=lambda pair: (cls._issue_key(pair[1]), pair[0]))
 
@@ -690,6 +794,10 @@ class LixetEngine:
     @staticmethod
     def _is_repairable(item: dict) -> bool:
         return bool(item.get("repairable") and item.get("fixes") and item.get("repair_level") in {"safe", "guarded"})
+
+    @staticmethod
+    def _is_problem(item: dict) -> bool:
+        return str(item.get("severity", "info")).lower() != "info" and str(item.get("confidence", "high")) == "high"
 
     @classmethod
     def _repairable_text(cls, issues: list[dict]) -> str:

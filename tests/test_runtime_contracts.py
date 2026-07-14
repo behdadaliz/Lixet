@@ -365,7 +365,7 @@ class BackupContractTests(unittest.TestCase):
 
 
 class DiagnosticBranchTests(unittest.TestCase):
-    def test_dns_reports_managed_invalid_duplicate_and_runtime_states(self) -> None:
+    def test_dns_managed_resolver_reports_only_real_runtime_failure(self) -> None:
         path = "/tmp/resolv.conf"
         rows = [
             row(1, "nameserver invalid", path),
@@ -384,16 +384,7 @@ class DiagnosticBranchTests(unittest.TestCase):
         }
         issues = DNSValidator(path).run_rules(data)
         codes = {item["code"] for item in issues}
-        self.assertTrue(
-            {
-                "DNS_MANAGED_RESOLVER",
-                "DNS_INVALID_NAMESERVER",
-                "DNS_DUPLICATE_NAMESERVER",
-                "DNS_NAMESERVER_IGNORED",
-                "DNS_SEARCH_OVERRIDE",
-                "DNS_RESOLVECTL_FAILED",
-            }.issubset(codes)
-        )
+        self.assertEqual(codes, {"DNS_RESOLVECTL_FAILED"})
         self.assertEqual(DNSValidator(path).run_rules({"missing_config": True})[0]["code"], "DNS_RESOLV_CONF_MISSING")
 
     def test_networking_reports_file_and_runtime_failures(self) -> None:
@@ -435,7 +426,7 @@ class DiagnosticBranchTests(unittest.TestCase):
         self.assertTrue(NetworkingValidator._has_non_loopback_ip("inet 10.0.0.2/24"))
         self.assertTrue(NetworkingValidator._has_non_loopback_up("2: eth0: <BROADCAST,UP>"))
 
-    def test_nginx_reports_authoritative_and_structural_failures(self) -> None:
+    def test_nginx_authoritative_failure_suppresses_local_parser_guesses(self) -> None:
         path = "/tmp/nginx.conf"
         rows = [
             row(1, "}", path),
@@ -450,20 +441,10 @@ class DiagnosticBranchTests(unittest.TestCase):
             "config_test": {"returncode": 1, "evidence": f"error in {path}:4", "command": "nginx -t"},
         }
         codes = {item["code"] for item in NginxValidator(path).run_rules(data)}
-        self.assertTrue(
-            {
-                "NGINX_INCLUDE_ERROR",
-                "NGINX_CONFIG_TEST_FAILED",
-                "NGINX_UNMATCHED_CLOSE_BRACE",
-                "NGINX_UNCLOSED_BLOCK",
-                "NGINX_MISSING_SEMICOLON",
-                "NGINX_INVALID_WORKER_PROCESSES",
-                "NGINX_MISSING_EVENTS",
-            }.issubset(codes)
-        )
+        self.assertEqual(codes, {"NGINX_INCLUDE_ERROR", "NGINX_CONFIG_TEST_FAILED"})
         self.assertNotIn("ignored", NginxValidator._code('x "ignored" # comment'))
 
-    def test_ssh_reports_exact_bad_directive_and_invalid_values(self) -> None:
+    def test_ssh_authoritative_failure_suppresses_local_parser_guesses(self) -> None:
         path = "/tmp/sshd_config"
         rows = [
             {**row(1, "BadOption yes", path), "directive": "BadOption", "value": "yes", "in_match": False},
@@ -499,23 +480,13 @@ class DiagnosticBranchTests(unittest.TestCase):
         }
         issues = SSHValidator(path).run_rules(data)
         codes = {item["code"] for item in issues}
-        self.assertTrue(
-            {
-                "SSH_INCLUDE_ERROR",
-                "SSH_CONFIG_TEST_FAILED",
-                "SSH_INVALID_PORT",
-                "SSH_INVALID_PERMIT_ROOT_LOGIN",
-                "SSH_INVALID_PASSWORDAUTHENTICATION",
-                "SSH_INVALID_LISTEN_ADDRESS",
-                "SSH_DUPLICATE_PORT",
-            }.issubset(codes)
-        )
+        self.assertEqual(codes, {"SSH_INCLUDE_ERROR", "SSH_CONFIG_TEST_FAILED"})
         exact = next(item for item in issues if item["code"] == "SSH_CONFIG_TEST_FAILED")
         self.assertTrue(exact["repairable"])
         self.assertFalse(SSHValidator._valid_listen("[::1"))
         self.assertFalse(SSHValidator._valid_listen("host:70000"))
 
-    def test_systemd_reports_runtime_verifier_and_unit_failures(self) -> None:
+    def test_systemd_authoritative_failure_suppresses_unit_parser_guesses(self) -> None:
         def unit(path: str, rows: list[dict]) -> dict:
             return {"file_path": path, "lines": rows}
 
@@ -553,14 +524,9 @@ class DiagnosticBranchTests(unittest.TestCase):
                 "SYSTEMD_DEGRADED",
                 "SYSTEMD_FAILED_UNITS",
                 "SYSTEMD_VERIFY_FAILED",
-                "SYSTEMD_MISSING_SERVICE_SECTION",
-                "SYSTEMD_INVALID_TYPE",
-                "SYSTEMD_INVALID_RESTART",
-                "SYSTEMD_EMPTY_EXECSTART",
-                "SYSTEMD_EXECSTART_NOT_FOUND",
-                "SYSTEMD_MISSING_EXECSTART",
             }.issubset(codes)
         )
+        self.assertNotIn("SYSTEMD_INVALID_TYPE", codes)
         unavailable = SystemdValidator().run_rules({"units": units[:1], "failed_units": None, "system_state": None})
         unavailable_codes = {item["code"] for item in unavailable}
         self.assertTrue({"SYSTEMD_COMMAND_UNAVAILABLE", "SYSTEMD_VERIFIER_UNAVAILABLE"}.issubset(unavailable_codes))
