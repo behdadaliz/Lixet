@@ -4,7 +4,7 @@ Lixet is a Linux command-line tool for finding and carefully repairing common co
 
 It reads known system configuration files, runs local validation commands when available, and explains what it found before changing anything. Lixet uses deterministic rules only; it does not use AI-generated fixes or guess your system policy.
 
-> **Status:** Lixet `v0.3.0-beta` is beta software. Test it on non-critical systems first and review every repair before applying it.
+> **Status:** Lixet `v0.3.1-beta` is beta software. Test it on non-critical systems first and review every repair before applying it.
 
 ## What Lixet Can Do
 
